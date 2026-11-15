@@ -54,6 +54,8 @@ program
   .option('--no-enrich', 'Skip website enrichment step')
   .action(async (cmdOptions) => {
     try {
+      const config = await leadMine.loadConfig();
+
       const limit = parseInt(cmdOptions.limit, 10);
       if (Number.isNaN(limit) || limit < 1) {
         program.error('Limit must be a positive integer.');
@@ -63,8 +65,9 @@ program
       const outputPath = cmdOptions.output;
       const query = cmdOptions.query || cmdOptions.category;
 
-      // Validate options with Zod for clear error messages
+      // Config file values are merged first; CLI flags override them
       const scrapeOpts = ScrapeOptionsSchema.parse({
+        ...config,
         limit,
         headless: cmdOptions.headless,
         enrich: cmdOptions.enrich !== false,

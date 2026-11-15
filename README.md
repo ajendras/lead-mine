@@ -69,10 +69,13 @@ Built-in rate limiting, random delays, user-agent rotation and stealth to reduce
 Category, location, rating, review count and keyword filters for high-quality leads
 </td>
 <td>
+📋 <b>Config File</b><br>
+Persistent defaults via ~/.leadmine/config.json (CLI flags override)
+</td>
+<td>
 🧪 <b>Mockable Tests</b><br>
 Unit tests with recorded HTML fixtures so CI stays fast and reliable
 </td>
-<td></td>
 </tr>
 </table>
 
@@ -96,9 +99,13 @@ npm run build
 ## ⚡ Quick start
 
 ```ts
-import { scrapeMaps, saveLeads } from 'lead-mine';
+import { loadConfig, scrapeMaps, saveLeads } from 'lead-mine';
 
+const config = await loadConfig();
+
+// Config values are merged; explicit options override them
 const leads = await scrapeMaps('plumbers', 'Portland, OR', {
+  ...config,
   limit: 30,
   enrich: true,
   rpm: 12,
@@ -110,7 +117,7 @@ console.log(`Captured ${leads.length} leads`);
 
 ## 🧰 Usage
 
-Run the CLI (most common workflow):
+Run the CLI (most common workflow). The CLI automatically loads defaults from `~/.leadmine/config.json` if it exists. Flags override config values.
 
 ```bash
 lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv
@@ -131,9 +138,12 @@ lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA"
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { scrapeYelp, saveLeads } from 'lead-mine';
+import { loadConfig, scrapeYelp, saveLeads } from 'lead-mine';
+
+const config = await loadConfig();
 
 const leads = await scrapeYelp('coffee shops', 'Portland, OR', {
+  ...config,
   limit: 25,
   minRating: 4.0,
   enrich: true,
@@ -145,9 +155,12 @@ await saveLeads(leads, 'coffee-leads.xlsx');
 <details><summary>Advanced: custom rate-limit and headless control</summary>
 
 ```ts
-import { scrapeMaps } from 'lead-mine';
+import { loadConfig, scrapeMaps } from 'lead-mine';
+
+const config = await loadConfig();
 
 const leads = await scrapeMaps('dentists', 'London, UK', {
+  ...config,
   limit: 50,
   headless: false, // show browser for debugging
   rpm: 8,
@@ -157,6 +170,23 @@ const leads = await scrapeMaps('dentists', 'London, UK', {
 </details>
 
 ## 🔧 Configuration
+
+**Configuration File**
+
+LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually). Any `ScrapeOptions` can be set here. Command-line flags and programmatic options take precedence.
+
+Example `~/.leadmine/config.json`:
+
+```json
+{
+  "limit": 30,
+  "enrich": true,
+  "rpm": 12,
+  "headless": true,
+  "minRating": 4.0,
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+```
 
 | Option      | Default | Description |
 |-------------|---------|-------------|
@@ -193,9 +223,10 @@ flowchart TD
 ```text
 .
 ├── src/
-│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), saveLeads()
+│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), saveLeads(), loadConfig()
 │   ├── cli.ts            # Commander.js command definition with all flags
-│   ├── types.ts          # Lead interface, ScrapeOptions, Zod schema, ExportFormat
+│   ├── config.ts         # loadConfig() + CONFIG_PATH for ~/.leadmine/config.json
+│   ├── types.ts          # Lead interface, ScrapeOptions, Zod schema, ExportFormat, ConfigOptions
 │   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:)
 │   ├── exporter.ts       # exportLeads() using csv-writer, xlsx, fs
 │   ├── scrapers/
@@ -218,13 +249,13 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, and CLI option parsing.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, and the new `loadConfig()` helper.
 
 ## 📍 Roadmap
 
 <!-- roadmap:start -->
 - [x] **v0.1.0** — first release: Maps Scraper, Search Leads, Yelp Support, Smart Export
-- [ ] Add configuration file support (~/.leadmine/config.json)
+- [x] Add configuration file support (~/.leadmine/config.json)
 - [ ] Implement proxy rotation and residential proxy interface
 - [ ] Add more directory scrapers (YellowPages, Crunchbase)
 - [ ] Email verification step using disposable checker or SMTP

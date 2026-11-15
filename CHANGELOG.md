@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+### Added
+
+- Add configuration file support with auto-loading in CLI and loadConfig() helper
+
 ## [0.1.0] - 2026-11-15
 
 ### Added

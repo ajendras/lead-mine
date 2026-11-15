@@ -5,6 +5,7 @@ import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
 import { enrichLead } from './enricher.js';
 import { exportLeads } from './exporter.js';
 import { withRateLimit, randomDelay } from './utils/throttle.js';
+import { loadConfig } from './config.js';
 
 /**
  * Removes duplicate leads based on a normalized key composed of name + address or website.
@@ -37,7 +38,7 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
  *
  * @param category - Business category or search term (e.g. "plumbers", "roof repair")
  * @param location - Geographic target (e.g. "Portland, OR", "Austin, TX")
- * @param options - Scrape configuration
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json)
  * @returns Array of enriched, deduplicated Lead records
  * @throws {Error} When category or location are missing or invalid
  */
@@ -112,7 +113,7 @@ export async function scrapeMaps(
  * Scrape leads via Google organic search results and linked contact pages.
  *
  * @param query - Full search query (e.g. "plumbers Portland OR contact")
- * @param options - Scrape configuration
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json)
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeSearch(
@@ -168,7 +169,7 @@ export async function scrapeSearch(
  *
  * @param category - Business category (e.g. "plumbers")
  * @param location - City or neighborhood
- * @param options - Scrape configuration
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json)
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYelp(
@@ -250,6 +251,8 @@ export async function saveLeads(
   console.log('✅ Export completed.');
 }
 
-// Re-export core types for consumers
-export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource } from './types.js';
+// Re-export core types and new configuration utilities for consumers
+export { loadConfig } from './config.js';
+export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions } from './types.js';
 export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
+export { CONFIG_PATH } from './config.js';

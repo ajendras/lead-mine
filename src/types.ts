@@ -58,6 +58,11 @@ export type ExportFormat = 'csv' | 'json' | 'xlsx';
 export type ScrapeSource = 'maps' | 'search' | 'yelp';
 
 /**
+ * User configuration shape (all ScrapeOptions fields are optional).
+ */
+export type ConfigOptions = Partial<ScrapeOptions>;
+
+/**
  * Zod schema for runtime validation of scrape options.
  * Provides clear error messages for invalid configurations.
  */

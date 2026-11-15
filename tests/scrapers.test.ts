@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { scrapeMaps, scrapeSearch, scrapeYelp, saveLeads } from '../src/index.js';
+import { scrapeMaps, scrapeSearch, scrapeYelp, saveLeads, loadConfig } from '../src/index.js';
 import * as mapsScraper from '../src/scrapers/maps.js';
 import * as searchScraper from '../src/scrapers/search.js';
 import * as yelpScraper from '../src/scrapers/yelp.js';
@@ -7,6 +7,9 @@ import * as enricherModule from '../src/enricher.js';
 import * as exporterModule from '../src/exporter.js';
 import { randomDelay, withRateLimit } from '../src/utils/throttle.js';
 import type { Lead } from '../src/types.js';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 vi.mock('../src/scrapers/maps.js');
 vi.mock('../src/scrapers/search.js');
@@ -14,6 +17,9 @@ vi.mock('../src/scrapers/yelp.js');
 vi.mock('../src/enricher.js');
 vi.mock('../src/exporter.js');
 vi.mock('../src/utils/browser.js');
+vi.mock('node:fs/promises');
+vi.mock('node:os');
+vi.mock('node:path');
 
 describe('LeadMine Scrapers & Utilities', () => {
   beforeEach(() => {
@@ -44,6 +50,11 @@ describe('LeadMine Scrapers & Utilities', () => {
       source: 'yelp' as const,
       scrapedAt: new Date().toISOString(),
     }]);
+
+    // Default mocks for config loader (most tests expect no config file)
+    vi.mocked(os.homedir).mockReturnValue('/home/testuser');
+    vi.mocked(path.join).mockImplementation((...args: string[]) => args.join('/'));
+    vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' } as any);
   });
 
   describe('throttle utilities', () => {
@@ -117,6 +128,45 @@ describe('LeadMine Scrapers & Utilities', () => {
         'json',
         'output.json'
       );
+    });
+  });
+
+  describe('configuration', () => {
+    it('loadConfig returns empty object when file does not exist', async () => {
+      const config = await loadConfig();
+      expect(config).toEqual({});
+    });
+
+    it('loadConfig parses and validates JSON config', async () => {
+      const mockConfigStr = JSON.stringify({
+        limit: 50,
+        rpm: 12,
+        enrich: false,
+        minRating: 4.0,
+      });
+      vi.mocked(fs.readFile).mockResolvedValueOnce(mockConfigStr);
+
+      const config = await loadConfig('/tmp/test-config.json');
+      expect(config).toEqual({
+        limit: 50,
+        rpm: 12,
+        enrich: false,
+        minRating: 4.0,
+      });
+    });
+
+    it('loadConfig falls back gracefully on invalid JSON', async () => {
+      vi.mocked(fs.readFile).mockResolvedValueOnce('invalid json {');
+
+      const config = await loadConfig('/tmp/bad-config.json');
+      expect(config).toEqual({});
+    });
+
+    it('loadConfig falls back on Zod validation error', async () => {
+      vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify({ limit: 9999, rpm: -5 }));
+
+      const config = await loadConfig('/tmp/invalid-values.json');
+      expect(config).toEqual({});
     });
   });
 });
