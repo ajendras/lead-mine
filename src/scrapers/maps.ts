@@ -91,7 +91,7 @@ export async function scrapeGoogleMaps(
     console.log(`📋 Found ${cards.length} candidate results. Extracting up to ${maxResults}...`);
 
     for (let i = 0; i < Math.min(cards.length, maxResults); i++) {
-      const card = cards[i];
+      const card = cards[i]!;
 
       try {
         await card.scrollIntoViewIfNeeded();
@@ -154,7 +154,7 @@ async function extractFromSidePanel(page: Page): Promise<Lead | null> {
       );
     });
     if (possibleAddresses.length > 0) {
-      address = possibleAddresses[0].textContent?.trim() || '';
+      address = possibleAddresses[0]!.textContent?.trim() || '';
     }
 
     // Phone from tel: links or regex in text
@@ -166,7 +166,7 @@ async function extractFromSidePanel(page: Page): Promise<Lead | null> {
       const allText = panel.textContent || '';
       const phoneRegex = /\(?\b[2-9][0-9]{2}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/;
       const match = allText.match(phoneRegex);
-      if (match) phone = match[0];
+      if (match) phone = match[0]!;
     }
 
     // Website from first external http link that isn't Google
@@ -191,14 +191,14 @@ async function extractFromSidePanel(page: Page): Promise<Lead | null> {
     if (ratingContainer) {
       const aria = ratingContainer.getAttribute('aria-label') || ratingContainer.textContent || '';
       const ratingMatch = aria.match(/(\d+\.?\d?)\s*(?:star|out of)/i);
-      if (ratingMatch) rating = parseFloat(ratingMatch[1]);
+      if (ratingMatch && ratingMatch[1]) rating = parseFloat(ratingMatch[1]);
     }
 
     // Review count
     let reviewCount: number | undefined;
     const reviewText = panel.textContent || '';
     const reviewMatch = reviewText.match(/\((\d{1,3}(?:,\d{3})*)\)/);
-    if (reviewMatch) {
+    if (reviewMatch && reviewMatch[1]) {
       reviewCount = parseInt(reviewMatch[1].replace(/,/g, ''), 10);
     }
 

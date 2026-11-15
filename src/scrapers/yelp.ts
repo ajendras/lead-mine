@@ -74,15 +74,13 @@ export async function scrapeYelp(
         const name = nameLink.textContent?.trim();
         if (!name || name.length < 3) continue;
 
-        const detailUrl = 'https://www.yelp.com' + (nameLink.getAttribute('href') || '');
-
         // Rating
         let rating: number | undefined;
         const ratingEl = card.querySelector('[aria-label*="star rating"]');
         if (ratingEl) {
           const label = ratingEl.getAttribute('aria-label') || '';
           const match = label.match(/(\d+\.?\d?)\s*star/);
-          if (match) rating = parseFloat(match[1]);
+          if (match) rating = parseFloat(match[1]!);
         }
 
         // Review count
@@ -129,7 +127,7 @@ export async function scrapeYelp(
     console.log(`🔎 Visiting ${detailVisits} Yelp detail pages for deeper data...`);
 
     for (let i = 0; i < detailVisits && i < leads.length; i++) {
-      const lead = leads[i];
+      const lead = leads[i]!;
       // Reconstruct detail URL from name (Yelp slugs are normalized)
       const slug = lead.name
         .toLowerCase()
@@ -176,7 +174,7 @@ async function extractYelpDetail(page: Page): Promise<{
 }> {
   return page.evaluate(() => {
     const phoneEl = document.querySelector('a[href^="tel:"]');
-    let phone = phoneEl ? phoneEl.getAttribute('href')?.replace('tel:', '') : undefined;
+    let phone = phoneEl ? phoneEl.getAttribute('href')?.replace(/^tel:/, '') || undefined : undefined;
 
     let website = '';
     const websiteLink = document.querySelector('a[href^="http"]:not([href*="yelp.com"])');

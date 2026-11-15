@@ -16,7 +16,7 @@ import type { Lead } from './types.js';
  * @returns Promise resolving to an enriched Lead (email, phone, address may be added)
  */
 export async function enrichLead(lead: Lead): Promise<Lead> {
-  if (!lead.website?.startsWith('http')) {
+  if (!lead.website || !lead.website.startsWith('http')) {
     return { ...lead };
   }
 
@@ -44,7 +44,7 @@ export async function enrichLead(lead: Lead): Promise<Lead> {
 
     await randomDelay(1350, 2650);
 
-    const extra = await extractEnrichedInfo(page, lead.website);
+    const extra = await extractEnrichedInfo(page);
 
     const enriched: Lead = {
       ...lead,
@@ -71,10 +71,9 @@ export async function enrichLead(lead: Lead): Promise<Lead> {
  * and avoids common false-positive domains.
  */
 async function extractEnrichedInfo(
-  page: Page,
-  baseUrl: string
+  page: Page
 ): Promise<{ email?: string; phone?: string; address?: string }> {
-  return page.evaluate((url: string) => {
+  return page.evaluate(() => {
     const text = document.body?.innerText ?? '';
     const html = document.documentElement.outerHTML ?? '';
     const result: { email?: string; phone?: string; address?: string } = {};
@@ -108,21 +107,22 @@ async function extractEnrichedInfo(
         const preferred = candidates.find(
           (e) => !/(info|contact|hello|admin|sales|support)@/.test(e)
         );
-        result.email = preferred ?? candidates[0];
+        result.email = preferred ?? candidates[0]!;
       }
     }
 
     // Phone from tel: link or North-American phone regex
     const telLink = document.querySelector('a[href^="tel:"]');
     if (telLink) {
-      const tel = telLink.getAttribute('href')?.replace(/^tel:/i, '').trim();
+      const href = telLink.getAttribute('href') || '';
+      const tel = href.replace(/^tel:/i, '').trim();
       if (tel) result.phone = tel;
     } else {
       const phoneRe =
         /\b(?:\+?1[-.\s]?)?\(?([2-9][0-9]{2})\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g;
       const phoneMatches = [...text.matchAll(phoneRe)];
       if (phoneMatches.length > 0) {
-        result.phone = phoneMatches[0][0];
+        result.phone = phoneMatches[0]![0];
       }
     }
 
@@ -131,7 +131,7 @@ async function extractEnrichedInfo(
       const zipRe = /\b\d{5}(?:-\d{4})?\b/;
       const zipMatch = text.match(zipRe);
       if (zipMatch) {
-        const idx = text.indexOf(zipMatch[0]);
+        const idx = text.indexOf(zipMatch[0]!);
         const start = Math.max(0, idx - 95);
         const slice = text.slice(start, idx + 25).trim();
         if (slice.length > 12 && /[A-Za-z]/.test(slice)) {
@@ -141,5 +141,5 @@ async function extractEnrichedInfo(
     }
 
     return result;
-  }, baseUrl);
+  });
 }

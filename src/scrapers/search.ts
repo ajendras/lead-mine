@@ -102,7 +102,7 @@ export async function scrapeGoogleSearch(
     // Politely visit a few top websites to pull missing contact info
     console.log(`🔗 Visiting ${Math.min(6, leads.length)} sites for contact enrichment...`);
     for (let i = 0; i < Math.min(6, leads.length); i++) {
-      const lead = leads[i];
+      const lead = leads[i]!;
       if (!lead.website) continue;
 
       try {
@@ -143,14 +143,13 @@ async function extractContactInfo(page: Page): Promise<{
 }> {
   return page.evaluate(() => {
     const text = document.body.innerText || '';
-    const html = document.documentElement.outerHTML;
 
     // Phone
     let phone: string | undefined;
     const phoneRegex = /\b(?:\+?1[-.\s]?)?\(?([2-9][0-9]{2})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})\b/g;
     const phoneMatches = [...text.matchAll(phoneRegex)];
     if (phoneMatches.length > 0) {
-      phone = phoneMatches[0][0];
+      phone = phoneMatches[0]![0];
     }
 
     // Email
@@ -160,14 +159,14 @@ async function extractContactInfo(page: Page): Promise<{
     if (emailMatches.length > 0) {
       // Prefer non-info@ addresses
       const preferred = emailMatches.find((m) => !/info@|contact@|hello@/i.test(m[0]));
-      email = preferred ? preferred[0] : emailMatches[0][0];
+      email = preferred ? preferred[0] : emailMatches[0]![0];
     }
 
     // Very basic address extraction (look for ZIP codes with surrounding text)
     let address: string | undefined;
     const zipMatch = text.match(/\b(\d{5}(?:-\d{4})?)\b/);
     if (zipMatch) {
-      const idx = text.indexOf(zipMatch[0]);
+      const idx = text.indexOf(zipMatch[0]!);
       const start = Math.max(0, idx - 80);
       address = text.slice(start, idx + 12).trim();
     }

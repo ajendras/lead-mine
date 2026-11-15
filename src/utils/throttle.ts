@@ -67,13 +67,13 @@ export function withRateLimit<T extends (...args: any[]) => Promise<any>>(
     const now = Date.now();
 
     // Remove calls older than the sliding window
-    while (callTimestamps.length > 0 && callTimestamps[0] <= now - windowMs) {
+    while (callTimestamps.length > 0 && callTimestamps[0]! <= now - windowMs) {
       callTimestamps.shift();
     }
 
     // If we've hit the limit, wait until the oldest call falls out of the window
     if (callTimestamps.length >= rpm) {
-      const waitUntil = callTimestamps[0] + windowMs + 50; // small safety buffer
+      const waitUntil = callTimestamps[0]! + windowMs + 50; // small safety buffer
       const waitTime = waitUntil - now;
       if (waitTime > 0) {
         await new Promise((resolve) => setTimeout(resolve, waitTime));

@@ -20,7 +20,7 @@ const USER_AGENTS = [
  * @returns Promise<Browser> ready for newContext/newPage usage
  */
 export async function launchStealthBrowser(): Promise<Browser> {
-  const selectedUA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  const _selectedUA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 
   const browser = await chromium.launch({
     headless: true,
