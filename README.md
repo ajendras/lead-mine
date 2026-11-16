@@ -44,16 +44,18 @@ Pulls name, address, phone, rating and website from Google Maps results using Pl
 🔎 <b>Search Leads</b><br>
 Extracts organic Google results and linked contact pages for broader web leads
 </td>
+</tr>
+<tr>
 <td>
 📍 <b>Yelp Support</b><br>
 Scrapes business listings from Yelp with fallback when Maps data is thin
 </td>
-</tr>
-<tr>
 <td>
 📤 <b>Smart Export</b><br>
 Writes clean CSV, JSON or XLSX with configurable columns and deduplication
 </td>
+</tr>
+<tr>
 <td>
 🔧 <b>Contact Enricher</b><br>
 Visits websites to discover email patterns, social links and missing phones
@@ -71,6 +73,12 @@ Category, location, rating, review count and keyword filters for high-quality le
 <td>
 📋 <b>Config File</b><br>
 Persistent defaults via ~/.leadmine/config.json (CLI flags override)
+</td>
+</tr>
+<tr>
+<td>
+🔄 <b>Proxy Rotation + Residential</b><br>
+Configurable proxy lists with automatic rotation; native support for residential proxy providers (Smartproxy, Oxylabs, Bright Data gateway URLs)
 </td>
 <td>
 🧪 <b>Mockable Tests</b><br>
@@ -109,6 +117,7 @@ const leads = await scrapeMaps('plumbers', 'Portland, OR', {
   limit: 30,
   enrich: true,
   rpm: 12,
+  proxy: 'http://user:pass@residential.provider:22222', // rotates automatically
 });
 
 await saveLeads(leads, 'leads.csv');
@@ -135,6 +144,20 @@ Yelp fallback when Maps coverage is thin:
 lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA" --limit=15
 ```
 
+Residential proxy example (rotates IPs via provider gateway):
+
+```bash
+lead-mine scrape --category="lawyers" --location="New York, NY" --limit=50 \
+  --proxy="http://youruser-zone-residential:yourpass@gate.smartproxy.com:7000"
+```
+
+Multiple proxies (CLI rotates through them):
+
+```bash
+lead-mine scrape --category="plumbers" --location="Portland, OR" \
+  --proxy http://proxy1.example.com:8080 http://proxy2.example.com:8080
+```
+
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
@@ -147,6 +170,7 @@ const leads = await scrapeYelp('coffee shops', 'Portland, OR', {
   limit: 25,
   minRating: 4.0,
   enrich: true,
+  proxy: ['http://proxy1:8080', 'http://proxy2:8080'],
 });
 
 await saveLeads(leads, 'coffee-leads.xlsx');
@@ -165,6 +189,7 @@ const leads = await scrapeMaps('dentists', 'London, UK', {
   headless: false, // show browser for debugging
   rpm: 8,
   minRating: 4.5,
+  proxy: 'http://user:pass@res.proxy.com:4000',
 });
 ```
 </details>
@@ -184,7 +209,8 @@ Example `~/.leadmine/config.json`:
   "rpm": 12,
   "headless": true,
   "minRating": 4.0,
-  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+  "proxy": "http://user:pass@zproxy.lumproxy.com:22222"
 }
 ```
 
@@ -196,6 +222,7 @@ Example `~/.leadmine/config.json`:
 | rpm         | 20      | Requests per minute for rate limiting (`withRateLimit`) |
 | minRating   | —       | Filter leads by minimum rating (0–5) |
 | userAgent   | —       | Override default stealth user agent |
+| proxy       | —       | Single proxy URL or array of URLs for rotation. Residential proxies supported via provider gateway (e.g. `http://user-zone-resi:pass@gate.smartproxy.com:7000`). Rotates automatically across browser sessions. |
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
 
@@ -209,14 +236,14 @@ flowchart TD
     Index --> Yelp[src/scrapers/yelp.ts<br>list + detail page visits]
     Maps & Search & Yelp --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit]
     Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction]
-    Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium]
+    Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
     Dedup --> Export[exporter.ts<br>csv-writer / xlsx / JSON]
     Export --> FS[CSV / JSON / XLSX output]
     style Index fill:#d9c2a3,stroke:#3f2a1e
 ```
 
-`src/index.ts` coordinates scraping, enrichment, deduplication and export. All scrapers return a uniform `Lead[]` shape defined in `src/types.ts`. Browser sessions are created fresh per scrape/enrichment to maintain stealth.
+`src/index.ts` coordinates scraping, enrichment, deduplication and export. All scrapers return a uniform `Lead[]` shape defined in `src/types.ts`. Browser sessions are created fresh per scrape/enrichment to maintain stealth. Proxy rotation (including residential gateways) is handled centrally in `browser.ts`.
 
 ## 📁 Project structure
 
@@ -234,7 +261,7 @@ flowchart TD
 │   │   ├── search.ts     # scrapeGoogleSearch() + extractContactInfo
 │   │   └── yelp.ts       # scrapeYelp() + extractYelpDetail
 │   └── utils/
-│       ├── browser.ts    # launchStealthBrowser() with Chromium args
+│       ├── browser.ts    # launchStealthBrowser() + setProxies() + rotation
 │       └── throttle.ts   # randomDelay(), withRateLimit()
 ├── tests/
 │   └── scrapers.test.ts  # Vitest mocks + fixture tests for parsers, dedup, export
@@ -249,14 +276,14 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, and the new `loadConfig()` helper.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()` helper, and new proxy rotation behaviour.
 
 ## 📍 Roadmap
 
 <!-- roadmap:start -->
 - [x] **v0.1.0** — first release: Maps Scraper, Search Leads, Yelp Support, Smart Export
 - [x] Add configuration file support (~/.leadmine/config.json)
-- [ ] Implement proxy rotation and residential proxy interface
+- [x] Implement proxy rotation and residential proxy interface
 - [ ] Add more directory scrapers (YellowPages, Crunchbase)
 - [ ] Email verification step using disposable checker or SMTP
 - [ ] Interactive wizard mode for first-time users

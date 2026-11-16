@@ -19,19 +19,59 @@ export function getRandomUserAgent(): string {
   return USER_AGENTS[index]!;
 }
 
+let proxyList: string[] = [];
+let proxyIndex = 0;
+
+/**
+ * Configures the proxy list for rotation. Subsequent calls to launchStealthBrowser()
+ * will cycle through the provided proxies. Supports both datacenter and residential
+ * proxies. For residential, use a single rotating gateway URL from your provider
+ * (e.g. Bright Data, Smartproxy, Oxylabs) which typically rotates the underlying
+ * IP on each new browser/context.
+ *
+ * Call with undefined/empty to disable.
+ */
+export function setProxies(proxies?: string | string[] | null): void {
+  if (!proxies || (Array.isArray(proxies) && proxies.length === 0)) {
+    proxyList = [];
+    proxyIndex = 0;
+    return;
+  }
+
+  proxyList = Array.isArray(proxies)
+    ? proxies.filter((p): p is string => typeof p === 'string' && p.length > 0)
+    : [proxies].filter((p): p is string => typeof p === 'string' && p.length > 0);
+
+  proxyIndex = 0;
+
+  console.log(`🔄 Configured proxy rotation with ${proxyList.length} proxy(ies)`);
+}
+
+/**
+ * Internal helper to get (and advance) the next proxy in the rotation cycle.
+ */
+function getNextProxy(): string | undefined {
+  if (proxyList.length === 0) {
+    return undefined;
+  }
+  const proxy = proxyList[proxyIndex];
+  proxyIndex = (proxyIndex + 1) % proxyList.length;
+  return proxy;
+}
+
 /**
  * Launches a Chromium browser instance pre-configured with stealth-oriented
- * launch arguments that reduce automation signals. Callers should supply a
- * realistic userAgent via newContext({ userAgent: getRandomUserAgent() }) for
- * best results.
+ * launch arguments that reduce automation signals. If proxies have been configured
+ * via setProxies(), the next proxy in the rotation is automatically applied.
+ * This provides proxy rotation across scrapers and the enricher.
  *
- * Includes a stub for future proxy configuration. Headless defaults to true
- * (consistent with the CLI's default behavior).
- *
- * @returns Promise<Browser> ready for newContext/newPage usage
+ * Residential proxy services are supported by supplying their authenticated
+ * rotating gateway URL (credentials are never logged in cleartext).
  */
 export async function launchStealthBrowser(): Promise<Browser> {
-  const browser = await chromium.launch({
+  const proxy = getNextProxy();
+
+  const launchOptions: any = {
     headless: true,
     args: [
       '--no-sandbox',
@@ -48,10 +88,13 @@ export async function launchStealthBrowser(): Promise<Browser> {
       '--single-process',
       '--disable-web-security',
     ],
-  });
+  };
 
-  // Proxy support stub – extend launch options with a proxy object when needed:
-  // { proxy: { server: 'http://proxy.example.com:8080' } }
+  if (proxy) {
+    launchOptions.proxy = { server: proxy };
+  }
+
+  const browser = await chromium.launch(launchOptions);
 
   return browser;
 }

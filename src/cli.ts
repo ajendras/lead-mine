@@ -21,6 +21,7 @@ Examples:
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv
   $ lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich
   $ lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA" --limit=15
+  $ lead-mine scrape --category="lawyers" --location="New York, NY" --proxy="http://user-zone:pass@gate.smartproxy.com:7000"
     `
   );
 
@@ -52,6 +53,12 @@ program
   .option('--no-headless', 'Show browser window during scraping')
   .option('--enrich', 'Visit websites to discover emails and metadata (default for most sources)')
   .option('--no-enrich', 'Skip website enrichment step')
+  .addOption(
+    new Option(
+      '--proxy <proxies...>',
+      'One or more proxy URLs for rotation (http://user:pass@host:port). Residential gateway URLs supported.'
+    )
+  )
   .action(async (cmdOptions) => {
     try {
       const config = await leadMine.loadConfig();
@@ -71,6 +78,7 @@ program
         limit,
         headless: cmdOptions.headless,
         enrich: cmdOptions.enrich !== false,
+        proxy: cmdOptions.proxy,
       });
 
       let leads: leadMine.Lead[] = [];

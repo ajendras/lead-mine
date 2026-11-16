@@ -45,6 +45,15 @@ export interface ScrapeOptions {
   userAgent?: string;
   /** Maximum requests per minute (politeness control, default: 20) */
   rpm?: number;
+  /**
+   * Proxy server URL (string) or list of URLs for automatic rotation.
+   * Format: http[s]://[user:pass@]host:port or socks5://...
+   * For residential proxies supply your provider's rotating gateway URL
+   * (e.g. http://user-zone-residential:pass@gate.smartproxy.com:7000).
+   * The proxy rotator in browser.ts cycles through the list on each
+   * browser launch.
+   */
+  proxy?: string | string[];
 }
 
 /**
@@ -74,6 +83,7 @@ export const ScrapeOptionsSchema = z
     enrich: z.boolean().default(true),
     userAgent: z.string().optional(),
     rpm: z.number().int().min(1).max(60).default(20),
+    proxy: z.union([z.string(), z.array(z.string())]).optional(),
   })
   .passthrough();
 

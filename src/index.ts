@@ -5,6 +5,7 @@ import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
 import { enrichLead } from './enricher.js';
 import { exportLeads } from './exporter.js';
 import { withRateLimit, randomDelay } from './utils/throttle.js';
+import { setProxies } from './utils/browser.js';
 
 /**
  * Removes duplicate leads based on a normalized key composed of name + address or website.
@@ -37,7 +38,8 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
  *
  * @param category - Business category or search term (e.g. "plumbers", "roof repair")
  * @param location - Geographic target (e.g. "Portland, OR", "Austin, TX")
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json)
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
+ *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
  * @returns Array of enriched, deduplicated Lead records
  * @throws {Error} When category or location are missing or invalid
  */
@@ -47,6 +49,7 @@ export async function scrapeMaps(
   options: ScrapeOptions = {}
 ): Promise<Lead[]> {
   const validated = ScrapeOptionsSchema.parse(options);
+  setProxies(validated.proxy);
 
   if (!category?.trim()) {
     throw new Error(
@@ -112,7 +115,8 @@ export async function scrapeMaps(
  * Scrape leads via Google organic search results and linked contact pages.
  *
  * @param query - Full search query (e.g. "plumbers Portland OR contact")
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json)
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
+ *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeSearch(
@@ -120,6 +124,7 @@ export async function scrapeSearch(
   options: ScrapeOptions = {}
 ): Promise<Lead[]> {
   const validated = ScrapeOptionsSchema.parse(options);
+  setProxies(validated.proxy);
 
   if (!query?.trim()) {
     throw new Error('Search query is required.');
@@ -168,7 +173,8 @@ export async function scrapeSearch(
  *
  * @param category - Business category (e.g. "plumbers")
  * @param location - City or neighborhood
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json)
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
+ *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYelp(
@@ -177,6 +183,7 @@ export async function scrapeYelp(
   options: ScrapeOptions = {}
 ): Promise<Lead[]> {
   const validated = ScrapeOptionsSchema.parse(options);
+  setProxies(validated.proxy);
 
   if (!category?.trim()) {
     throw new Error('Category is required for Yelp scraping.');
