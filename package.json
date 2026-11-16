@@ -1,7 +1,7 @@
 {
   "name": "lead-mine",
   "version": "0.1.0",
-  "description": "CLI to scrape and enrich targeted business leads from Google Search, Maps, Yelp and directories. Self-hosted, transparent, and polite.",
+  "description": "CLI to scrape and enrich targeted business leads from Google Search, Maps, Yelp, YellowPages, Crunchbase and directories. Self-hosted, transparent, and polite.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -26,6 +26,8 @@
     "google-maps",
     "google-search",
     "yelp",
+    "yellowpages",
+    "crunchbase",
     "business-intelligence",
     "sales",
     "cli",

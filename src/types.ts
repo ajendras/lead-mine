@@ -20,7 +20,7 @@ export interface Lead {
   /** Total number of reviews the rating is based on */
   reviewCount?: number;
   /** Platform the lead was scraped from */
-  source: 'maps' | 'search' | 'yelp';
+  source: 'maps' | 'search' | 'yelp' | 'yellowpages' | 'crunchbase';
   /** Category/keyword used during the search */
   category?: string;
   /** Geographic location used for the search */
@@ -64,7 +64,7 @@ export type ExportFormat = 'csv' | 'json' | 'xlsx';
 /**
  * Supported scraping sources.
  */
-export type ScrapeSource = 'maps' | 'search' | 'yelp';
+export type ScrapeSource = 'maps' | 'search' | 'yelp' | 'yellowpages' | 'crunchbase';
 
 /**
  * User configuration shape (all ScrapeOptions fields are optional).

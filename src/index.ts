@@ -2,6 +2,8 @@ import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, 
 import { scrapeGoogleMaps } from './scrapers/maps.js';
 import { scrapeGoogleSearch } from './scrapers/search.js';
 import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
+import { scrapeYellowPages as scrapeYellowPagesInternal } from './scrapers/yellowpages.js';
+import { scrapeCrunchbase as scrapeCrunchbaseInternal } from './scrapers/crunchbase.js';
 import { enrichLead } from './enricher.js';
 import { exportLeads } from './exporter.js';
 import { withRateLimit, randomDelay } from './utils/throttle.js';
@@ -227,6 +229,130 @@ export async function scrapeYelp(
 
   const unique = deduplicateLeads(leads);
   console.log(`✅ Retrieved ${unique.length} unique leads from Yelp.`);
+
+  return unique;
+}
+
+/**
+ * Scrape leads from YellowPages directory.
+ *
+ * @param category - Business category (e.g. "plumbers")
+ * @param location - City and state
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
+ *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ * @returns Array of enriched, deduplicated Lead records
+ */
+export async function scrapeYellowPages(
+  category: string,
+  location: string,
+  options: ScrapeOptions = {}
+): Promise<Lead[]> {
+  const validated = ScrapeOptionsSchema.parse(options);
+  setProxies(validated.proxy);
+
+  if (!category?.trim()) {
+    throw new Error('Category is required for YellowPages scraping.');
+  }
+  if (!location?.trim()) {
+    throw new Error('Location is required for YellowPages scraping.');
+  }
+
+  console.log(
+    `🔎 Scraping YellowPages for "${category}" in "${location}" (limit: ${validated.limit})`
+  );
+
+  let leads = await scrapeYellowPagesInternal(category.trim(), location.trim(), validated.limit);
+
+  leads = leads.map((lead) => ({
+    ...lead,
+    category: category.trim(),
+    location: location.trim(),
+    scrapedAt: new Date().toISOString(),
+    source: 'yellowpages' as const,
+  })) as Lead[];
+
+  if (validated.minRating !== undefined) {
+    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
+  }
+
+  if (validated.enrich && leads.length > 0) {
+    console.log(`Enriching ${leads.length} leads...`);
+    const throttledEnrich = withRateLimit(enrichLead, validated.rpm);
+    const enriched: Lead[] = [];
+
+    for (const lead of leads) {
+      try {
+        const result = await throttledEnrich(lead);
+        enriched.push(result);
+        if (enriched.length < leads.length) {
+          await randomDelay(1100, 2300);
+        }
+      } catch {
+        enriched.push(lead);
+      }
+    }
+    leads = enriched;
+  }
+
+  const unique = deduplicateLeads(leads);
+  console.log(`✅ Retrieved ${unique.length} unique leads from YellowPages.`);
+
+  return unique;
+}
+
+/**
+ * Scrape startup/company leads from Crunchbase.
+ *
+ * @param query - Search query (e.g. "fintech" or "AI companies Portland")
+ * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
+ *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ * @returns Array of enriched, deduplicated Lead records
+ */
+export async function scrapeCrunchbase(
+  query: string,
+  options: ScrapeOptions = {}
+): Promise<Lead[]> {
+  const validated = ScrapeOptionsSchema.parse(options);
+  setProxies(validated.proxy);
+
+  if (!query?.trim()) {
+    throw new Error('Query is required for Crunchbase scraping.');
+  }
+
+  console.log(`🔎 Scraping Crunchbase for "${query}" (limit: ${validated.limit})`);
+
+  let leads = await scrapeCrunchbaseInternal(query.trim(), validated.limit);
+
+  leads = leads.map((lead) => ({
+    ...lead,
+    category: query.trim(),
+    scrapedAt: new Date().toISOString(),
+    source: 'crunchbase' as const,
+  })) as Lead[];
+
+  if (validated.minRating !== undefined) {
+    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
+  }
+
+  if (validated.enrich && leads.length > 0) {
+    console.log(`Enriching ${leads.length} leads...`);
+    const throttledEnrich = withRateLimit(enrichLead, Math.min(validated.rpm, 10));
+    const enriched: Lead[] = [];
+
+    for (const lead of leads) {
+      try {
+        const result = await throttledEnrich(lead);
+        enriched.push(result);
+        await randomDelay(1400, 2800);
+      } catch {
+        enriched.push(lead);
+      }
+    }
+    leads = enriched;
+  }
+
+  const unique = deduplicateLeads(leads);
+  console.log(`✅ Retrieved ${unique.length} unique leads from Crunchbase.`);
 
   return unique;
 }

@@ -12,7 +12,7 @@
 <img src="https://img.shields.io/github/last-commit/ajendras/lead-mine?style=for-the-badge&color=3f2a1e" alt="Last commit">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-22c55e?style=for-the-badge" alt="PRs welcome"></a>
 
-**CLI to scrape and enrich targeted business leads from Google Search, Maps, Yelp and directories**
+**CLI to scrape and enrich targeted business leads from Google Search, Maps, Yelp, YellowPages, Crunchbase and directories**
 
 [✨ Features](#-features) • [⚡ Quick start](#-quick-start) • [🧰 Usage](#-usage) • [🧩 Architecture](#-architecture) • [📍 Roadmap](#-roadmap) • [🤝 Contributing](#-contributing)
 
@@ -25,7 +25,7 @@ Freelancers, agencies and sales teams burn hours hunting prospects on Google and
 
 - **Self-hosted & transparent** — full visibility into every request, no vendor lock-in or surprise billing
 - **Polite by design** — built-in rate limiting, random delays, user-agent rotation and stealth via Playwright
-- **Multi-source enrichment** — Google Maps, organic Search and Yelp with automatic website crawling for emails and missing phones
+- **Multi-source enrichment** — Google Maps, organic Search, Yelp, YellowPages and Crunchbase with automatic website crawling for emails and missing phones
 - **Clean, flexible exports** — deduplicated leads written to CSV, JSON or XLSX with consistent columns
 
 ## 🎬 Demo
@@ -51,39 +51,46 @@ Extracts organic Google results and linked contact pages for broader web leads
 Scrapes business listings from Yelp with fallback when Maps data is thin
 </td>
 <td>
-📤 <b>Smart Export</b><br>
-Writes clean CSV, JSON or XLSX with configurable columns and deduplication
+🟨 <b>YellowPages &amp; Crunchbase</b><br>
+Additional US directory and startup ecosystem sources with profile enrichment
 </td>
 </tr>
 <tr>
+<td>
+📤 <b>Smart Export</b><br>
+Writes clean CSV, JSON or XLSX with configurable columns and deduplication
+</td>
 <td>
 🔧 <b>Contact Enricher</b><br>
 Visits websites to discover email patterns, social links and missing phones
 </td>
+</tr>
+<tr>
 <td>
 ⏱️ <b>Polite Crawling</b><br>
 Built-in rate limiting, random delays, user-agent rotation and stealth to reduce blocks
 </td>
-</tr>
-<tr>
 <td>
 🎯 <b>Targeted Filters</b><br>
 Category, location, rating, review count and keyword filters for high-quality leads
 </td>
+</tr>
+<tr>
 <td>
 📋 <b>Config File</b><br>
 Persistent defaults via ~/.leadmine/config.json (CLI flags override)
 </td>
-</tr>
-<tr>
 <td>
 🔄 <b>Proxy Rotation + Residential</b><br>
 Configurable proxy lists with automatic rotation; native support for residential proxy providers (Smartproxy, Oxylabs, Bright Data gateway URLs)
 </td>
+</tr>
+<tr>
 <td>
 🧪 <b>Mockable Tests</b><br>
 Unit tests with recorded HTML fixtures so CI stays fast and reliable
 </td>
+<td></td>
 </tr>
 </table>
 
@@ -107,17 +114,17 @@ npm run build
 ## ⚡ Quick start
 
 ```ts
-import { loadConfig, scrapeMaps, saveLeads } from 'lead-mine';
+import { loadConfig, scrapeMaps, scrapeYellowPages, saveLeads } from 'lead-mine';
 
 const config = await loadConfig();
 
 // Config values are merged; explicit options override them
-const leads = await scrapeMaps('plumbers', 'Portland, OR', {
+const leads = await scrapeYellowPages('plumbers', 'Portland, OR', {
   ...config,
   limit: 30,
   enrich: true,
   rpm: 12,
-  proxy: 'http://user:pass@residential.provider:22222', // rotates automatically
+  proxy: 'http://user:pass@residential.provider:22222',
 });
 
 await saveLeads(leads, 'leads.csv');
@@ -144,6 +151,13 @@ Yelp fallback when Maps coverage is thin:
 lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA" --limit=15
 ```
 
+YellowPages and Crunchbase examples:
+
+```bash
+lead-mine scrape --source=yellowpages --category="electricians" --location="Chicago, IL" --limit=25
+lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich
+```
+
 Residential proxy example (rotates IPs via provider gateway):
 
 ```bash
@@ -161,11 +175,11 @@ lead-mine scrape --category="plumbers" --location="Portland, OR" \
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { loadConfig, scrapeYelp, saveLeads } from 'lead-mine';
+import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads } from 'lead-mine';
 
 const config = await loadConfig();
 
-const leads = await scrapeYelp('coffee shops', 'Portland, OR', {
+const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
   ...config,
   limit: 25,
   minRating: 4.0,
@@ -179,17 +193,16 @@ await saveLeads(leads, 'coffee-leads.xlsx');
 <details><summary>Advanced: custom rate-limit and headless control</summary>
 
 ```ts
-import { loadConfig, scrapeMaps } from 'lead-mine';
+import { loadConfig, scrapeCrunchbase } from 'lead-mine';
 
 const config = await loadConfig();
 
-const leads = await scrapeMaps('dentists', 'London, UK', {
+const leads = await scrapeCrunchbase('AI companies', {
   ...config,
-  limit: 50,
-  headless: false, // show browser for debugging
+  limit: 20,
+  headless: false,
   rpm: 8,
-  minRating: 4.5,
-  proxy: 'http://user:pass@res.proxy.com:4000',
+  enrich: true,
 });
 ```
 </details>
@@ -234,7 +247,9 @@ flowchart TD
     Index --> Maps[src/scrapers/maps.ts<br>Playwright scroll + panel extraction]
     Index --> Search[src/scrapers/search.ts<br>organic results + snippet parsing]
     Index --> Yelp[src/scrapers/yelp.ts<br>list + detail page visits]
-    Maps & Search & Yelp --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit]
+    Index --> YellowPages[src/scrapers/yellowpages.ts<br>list extraction with stable classes]
+    Index --> Crunchbase[src/scrapers/crunchbase.ts<br>profile scraping + website extraction]
+    Maps & Search & Yelp & YellowPages & Crunchbase --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit]
     Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction]
     Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
@@ -250,7 +265,7 @@ flowchart TD
 ```text
 .
 ├── src/
-│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), saveLeads(), loadConfig()
+│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), loadConfig()
 │   ├── cli.ts            # Commander.js command definition with all flags
 │   ├── config.ts         # loadConfig() + CONFIG_PATH for ~/.leadmine/config.json
 │   ├── types.ts          # Lead interface, ScrapeOptions, Zod schema, ExportFormat, ConfigOptions
@@ -259,7 +274,9 @@ flowchart TD
 │   ├── scrapers/
 │   │   ├── maps.ts       # scrapeGoogleMaps() + extractFromSidePanel
 │   │   ├── search.ts     # scrapeGoogleSearch() + extractContactInfo
-│   │   └── yelp.ts       # scrapeYelp() + extractYelpDetail
+│   │   ├── yelp.ts       # scrapeYelp() + extractYelpDetail
+│   │   ├── yellowpages.ts # scrapeYellowPages() + extractYellowPagesResults
+│   │   └── crunchbase.ts # scrapeCrunchbase() + extractCrunchbaseResults/Profile
 │   └── utils/
 │       ├── browser.ts    # launchStealthBrowser() + setProxies() + rotation
 │       └── throttle.ts   # randomDelay(), withRateLimit()
@@ -276,7 +293,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()` helper, and new proxy rotation behaviour.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()` helper, new proxy rotation behaviour, and the YellowPages/Crunchbase parsers.
 
 ## 📍 Roadmap
 
@@ -284,7 +301,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] **v0.1.0** — first release: Maps Scraper, Search Leads, Yelp Support, Smart Export
 - [x] Add configuration file support (~/.leadmine/config.json)
 - [x] Implement proxy rotation and residential proxy interface
-- [ ] Add more directory scrapers (YellowPages, Crunchbase)
+- [x] Add more directory scrapers (YellowPages, Crunchbase)
 - [ ] Email verification step using disposable checker or SMTP
 - [ ] Interactive wizard mode for first-time users
 - [ ] Google Sheets direct export via service account

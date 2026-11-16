@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name('lead-mine')
   .description(
-    'Self-hosted CLI to scrape and enrich business leads from Google Maps, Search, Yelp and directories.\n' +
+    'Self-hosted CLI to scrape and enrich business leads from Google Maps, Search, Yelp, YellowPages, Crunchbase and directories.\n' +
       'Transparent, polite, and under your control.'
   )
   .version('0.1.0')
@@ -21,6 +21,8 @@ Examples:
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv
   $ lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich
   $ lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA" --limit=15
+  $ lead-mine scrape --source=yellowpages --category="electricians" --location="Chicago, IL"
+  $ lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich
   $ lead-mine scrape --category="lawyers" --location="New York, NY" --proxy="http://user-zone:pass@gate.smartproxy.com:7000"
     `
   );
@@ -30,7 +32,7 @@ program
   .description('Run a lead scraping job')
   .addOption(
     new Option('-s, --source <source>', 'Data source')
-      .choices(['maps', 'search', 'yelp'])
+      .choices(['maps', 'search', 'yelp', 'yellowpages', 'crunchbase'])
       .default('maps')
   )
   .requiredOption(
@@ -39,11 +41,11 @@ program
   )
   .option(
     '-l, --location <location>',
-    'Geographic location (required for maps and yelp)',
+    'Geographic location (required for maps, yelp and yellowpages)',
     'Portland, OR'
   )
   .option('-q, --query <query>', 'Override full Google search query')
-  .option('--limit <number>', 'Maximum number of leads', '25')
+  .option('--limit <number>', 'Maximum number of leads to return', '25')
   .option(
     '-o, --output <filepath>',
     'Output file path. Extension determines format (csv/json/xlsx)',
@@ -96,11 +98,21 @@ program
           ...scrapeOpts,
           enrich: scrapeOpts.enrich !== undefined ? scrapeOpts.enrich : false,
         });
+      } else if (source === 'yellowpages') {
+        if (!cmdOptions.location?.trim()) {
+          program.error('--location is required when using --source=yellowpages');
+        }
+        leads = await leadMine.scrapeYellowPages(cmdOptions.category, cmdOptions.location, scrapeOpts);
       } else if (source === 'search') {
         if (!query?.trim()) {
           program.error('A query or category is required for search source.');
         }
         leads = await leadMine.scrapeSearch(query, scrapeOpts);
+      } else if (source === 'crunchbase') {
+        if (!query?.trim()) {
+          program.error('A query or category is required for crunchbase source.');
+        }
+        leads = await leadMine.scrapeCrunchbase(query, scrapeOpts);
       } else {
         program.error(`Unsupported source: ${source}`);
       }
