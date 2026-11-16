@@ -5,7 +5,6 @@ import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
 import { enrichLead } from './enricher.js';
 import { exportLeads } from './exporter.js';
 import { withRateLimit, randomDelay } from './utils/throttle.js';
-import { loadConfig } from './config.js';
 
 /**
  * Removes duplicate leads based on a normalized key composed of name + address or website.

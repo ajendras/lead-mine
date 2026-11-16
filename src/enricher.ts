@@ -82,7 +82,7 @@ async function extractEnrichedInfo(
     const mailto = document.querySelector('a[href^="mailto:"]');
     if (mailto) {
       const href = mailto.getAttribute('href') || '';
-      const extracted = href.replace(/^mailto:/i, '').split('?')[0].trim();
+      const extracted = (href.replace(/^mailto:/i, '').split('?')[0] || '').trim();
       if (extracted.includes('@') && !extracted.includes('example.com')) {
         result.email = extracted;
       }

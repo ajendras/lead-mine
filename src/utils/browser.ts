@@ -11,8 +11,8 @@ const USER_AGENTS = [
 
 /**
  * Launches a Chromium browser instance pre-configured with stealth-oriented
- * launch arguments that reduce automation signals. A random realistic User-Agent
- * is chosen (callers should apply it via newContext({ userAgent }) for best results).
+ * launch arguments that reduce automation signals. Callers should supply a
+ * realistic userAgent via newContext({ userAgent }) for best results.
  *
  * Includes a stub for future proxy configuration. Headless defaults to true
  * (consistent with the CLI's default behavior).
@@ -20,8 +20,6 @@ const USER_AGENTS = [
  * @returns Promise<Browser> ready for newContext/newPage usage
  */
 export async function launchStealthBrowser(): Promise<Browser> {
-  const _selectedUA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-
   const browser = await chromium.launch({
     headless: true,
     args: [
