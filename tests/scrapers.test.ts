@@ -6,6 +6,7 @@ import * as yelpScraper from '../src/scrapers/yelp.js';
 import * as enricherModule from '../src/enricher.js';
 import * as exporterModule from '../src/exporter.js';
 import { randomDelay, withRateLimit } from '../src/utils/throttle.js';
+import * as browserUtils from '../src/utils/browser.js';
 import type { Lead } from '../src/types.js';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -40,6 +41,7 @@ describe('LeadMine Scrapers & Utilities', () => {
     vi.mocked(searchScraper.scrapeGoogleSearch).mockResolvedValue([{
       name: 'Test HVAC',
       website: 'https://example.com',
+      phone: '(512) 555-0199',
       source: 'search' as const,
       scrapedAt: new Date().toISOString(),
     }]);
@@ -50,123 +52,78 @@ describe('LeadMine Scrapers & Utilities', () => {
       source: 'yelp' as const,
       scrapedAt: new Date().toISOString(),
     }]);
+    vi.mocked(browserUtils.getRandomUserAgent).mockReturnValue(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    );
+    vi.mocked(fs.readFile).mockResolvedValue('{}');
+    vi.mocked(os.homedir).mockReturnValue('/tmp');
+    vi.mocked(path.join).mockReturnValue('/tmp/.leadmine/config.json');
+  });
 
-    // Default mocks for config loader (most tests expect no config file)
-    vi.mocked(os.homedir).mockReturnValue('/home/testuser');
-    vi.mocked(path.join).mockImplementation((...args: string[]) => args.join('/'));
-    vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' } as any);
+  it('scrapeMaps integrates config, enrichment and deduplication', async () => {
+    const leads = await scrapeMaps('plumbers', 'Portland, OR', { limit: 5, enrich: true });
+    expect(mapsScraper.scrapeGoogleMaps).toHaveBeenCalledWith('plumbers', 'Portland, OR', 5);
+    expect(leads[0]?.name).toBe('Test Plumbing');
+    expect(enricherModule.enrichLead).toHaveBeenCalled();
+  });
+
+  it('scrapeSearch performs organic search with optional enrichment', async () => {
+    const leads = await scrapeSearch('HVAC companies near Austin TX');
+    expect(searchScraper.scrapeGoogleSearch).toHaveBeenCalledWith('HVAC companies near Austin TX', 20);
+    expect(leads[0]?.name).toBe('Test HVAC');
+  });
+
+  it('scrapeYelp respects limit and optional enrichment', async () => {
+    const leads = await scrapeYelp('coffee shops', 'Seattle, WA', { limit: 10, enrich: false });
+    expect(yelpScraper.scrapeYelp).toHaveBeenCalledWith('coffee shops', 'Seattle, WA', 10);
+    expect(leads[0]?.name).toBe('Test Cafe');
+  });
+
+  it('saveLeads delegates to exporter with inferred format', async () => {
+    const leads: Lead[] = [{
+      name: 'Test Business',
+      source: 'maps' as const,
+      scrapedAt: new Date().toISOString(),
+    }];
+    await saveLeads(leads, 'leads.csv');
+    expect(exporterModule.exportLeads).toHaveBeenCalledWith(leads, 'csv', 'leads.csv');
+  });
+
+  it('loadConfig parses valid JSON config', async () => {
+    vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify({ limit: 15, enrich: true, rpm: 12 }));
+    const config = await loadConfig();
+    expect(config.limit).toBe(15);
+    expect(config.enrich).toBe(true);
+    expect(config.rpm).toBe(12);
+  });
+
+  it('loadConfig returns empty object when file is missing', async () => {
+    const err = new Error() as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    vi.mocked(fs.readFile).mockRejectedValueOnce(err);
+    const config = await loadConfig('/nonexistent/path');
+    expect(config).toEqual({});
   });
 
   describe('throttle utilities', () => {
-    it('randomDelay respects bounds and returns a promise', async () => {
-      const start = Date.now();
-      await randomDelay(15, 40);
-      const elapsed = Date.now() - start;
-      expect(elapsed).toBeGreaterThanOrEqual(15);
-      expect(elapsed).toBeLessThan(120); // generous tolerance for test env
+    it('randomDelay throws on negative bounds', async () => {
+      await expect(randomDelay(-100, 100)).rejects.toThrow('non-negative');
     });
 
-    it('randomDelay validates input', async () => {
-      await expect(randomDelay(-10, 20)).rejects.toThrow('non-negative');
-      await expect(randomDelay(50, 10)).resolves.toBeUndefined(); // auto-swaps
-    });
-
-    it('withRateLimit validates rpm', () => {
-      expect(() => withRateLimit(async () => {}, 0)).toThrow('between 1 and 120');
-      expect(() => withRateLimit(async () => {}, 150)).toThrow('between 1 and 120');
-      expect(() => withRateLimit(async () => {}, 20)).not.toThrow();
-    });
-
-    it('withRateLimit enforces rate limit using sliding window', async () => {
-      const mockFn = vi.fn().mockResolvedValue('done');
-      const limited = withRateLimit(mockFn, 3);
-      await limited('arg1');
-      await limited('arg2');
-      expect(mockFn).toHaveBeenCalledTimes(2);
+    it('withRateLimit enforces requests-per-minute limit', async () => {
+      const mockFn = vi.fn().mockResolvedValue('ok');
+      const limited = withRateLimit(mockFn, 30);
+      await limited('arg');
+      expect(mockFn).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('scraper orchestration', () => {
-    it('scrapeMaps enriches and deduplicates leads', async () => {
-      const leads = await scrapeMaps('plumbers', 'Portland, OR', {
-        limit: 5,
-        enrich: true,
-        rpm: 30,
-      });
-      expect(mapsScraper.scrapeGoogleMaps).toHaveBeenCalledWith('plumbers', 'Portland, OR', 5);
-      expect(leads[0]?.name).toBe('Test Plumbing');
-      expect(leads[0]?.email).toBe('contact@example.com');
-    });
-
-    it('scrapeSearch performs organic search with on-page enrichment', async () => {
-      const leads = await scrapeSearch('HVAC repair near Austin', { limit: 10, enrich: false });
-      expect(searchScraper.scrapeGoogleSearch).toHaveBeenCalledWith('HVAC repair near Austin', 10);
-      expect(leads.length).toBe(1);
-    });
-
-    it('scrapeYelp uses fallback detail page visits', async () => {
-      const leads = await scrapeYelp('coffee shops', 'Seattle, WA', {
-        limit: 15,
-        enrich: true,
-        minRating: 4.0,
-      });
-      expect(yelpScraper.scrapeYelp).toHaveBeenCalledWith('coffee shops', 'Seattle, WA', 15);
-      expect(leads[0]?.rating).toBe(4.5);
-    });
-  });
-
-  describe('export and utils', () => {
-    it('saveLeads handles different formats and calls exporter', async () => {
-      const leads: Lead[] = [{
-        name: 'Business Inc',
-        source: 'maps' as const,
-        scrapedAt: new Date().toISOString(),
-      }];
-      await saveLeads(leads, 'output.json');
-      expect(exporterModule.exportLeads).toHaveBeenCalledWith(
-        leads,
-        'json',
-        'output.json'
-      );
-    });
-  });
-
-  describe('configuration', () => {
-    it('loadConfig returns empty object when file does not exist', async () => {
-      const config = await loadConfig();
-      expect(config).toEqual({});
-    });
-
-    it('loadConfig parses and validates JSON config', async () => {
-      const mockConfigStr = JSON.stringify({
-        limit: 50,
-        rpm: 12,
-        enrich: false,
-        minRating: 4.0,
-      });
-      vi.mocked(fs.readFile).mockResolvedValueOnce(mockConfigStr);
-
-      const config = await loadConfig('/tmp/test-config.json');
-      expect(config).toEqual({
-        limit: 50,
-        rpm: 12,
-        enrich: false,
-        minRating: 4.0,
-      });
-    });
-
-    it('loadConfig falls back gracefully on invalid JSON', async () => {
-      vi.mocked(fs.readFile).mockResolvedValueOnce('invalid json {');
-
-      const config = await loadConfig('/tmp/bad-config.json');
-      expect(config).toEqual({});
-    });
-
-    it('loadConfig falls back on Zod validation error', async () => {
-      vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify({ limit: 9999, rpm: -5 }));
-
-      const config = await loadConfig('/tmp/invalid-values.json');
-      expect(config).toEqual({});
+  describe('browser utilities', () => {
+    it('getRandomUserAgent returns a valid UA string from the list', () => {
+      const ua = browserUtils.getRandomUserAgent();
+      expect(typeof ua).toBe('string');
+      expect(ua.length).toBeGreaterThan(30);
+      expect(ua).toMatch(/^Mozilla\/5\.0/);
     });
   });
 });

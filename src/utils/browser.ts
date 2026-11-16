@@ -10,9 +10,20 @@ const USER_AGENTS = [
 ];
 
 /**
+ * Returns a random realistic desktop user-agent string from the curated list.
+ * Helps vary fingerprints across sessions and leads when used with
+ * newContext({ userAgent }).
+ */
+export function getRandomUserAgent(): string {
+  const index = Math.floor(Math.random() * USER_AGENTS.length);
+  return USER_AGENTS[index]!;
+}
+
+/**
  * Launches a Chromium browser instance pre-configured with stealth-oriented
  * launch arguments that reduce automation signals. Callers should supply a
- * realistic userAgent via newContext({ userAgent }) for best results.
+ * realistic userAgent via newContext({ userAgent: getRandomUserAgent() }) for
+ * best results.
  *
  * Includes a stub for future proxy configuration. Headless defaults to true
  * (consistent with the CLI's default behavior).

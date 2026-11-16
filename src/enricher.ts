@@ -1,5 +1,5 @@
 import type { Browser, Page } from 'playwright';
-import { launchStealthBrowser } from './utils/browser.js';
+import { launchStealthBrowser, getRandomUserAgent } from './utils/browser.js';
 import { randomDelay } from './utils/throttle.js';
 import type { Lead } from './types.js';
 
@@ -26,8 +26,7 @@ export async function enrichLead(lead: Lead): Promise<Lead> {
   try {
     browser = await launchStealthBrowser();
     const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      userAgent: getRandomUserAgent(),
       viewport: { width: 1366, height: 920 },
       locale: 'en-US',
       timezoneId: 'America/Los_Angeles',
