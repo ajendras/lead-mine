@@ -383,7 +383,8 @@ export async function saveLeads(
   console.log('✅ Export completed.');
 }
 
-// Re-export core types and new configuration utilities for consumers
+// Re-export public API, core utilities, types and configuration for consumers
+export { deduplicateLeads };
 export { loadConfig } from './config.js';
 export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions } from './types.js';
 export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
