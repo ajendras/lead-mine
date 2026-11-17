@@ -41,7 +41,7 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
  * @param category - Business category or search term (e.g. "plumbers", "roof repair")
  * @param location - Geographic target (e.g. "Portland, OR", "Austin, TX")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  * @throws {Error} When category or location are missing or invalid
  */
@@ -87,7 +87,10 @@ export async function scrapeMaps(
   // Enrichment with polite rate limiting
   if (validated.enrich && leads.length > 0) {
     console.log(`Enriching ${leads.length} leads (this may take a moment)...`);
-    const throttledEnrich = withRateLimit(enrichLead, validated.rpm);
+    const throttledEnrich = withRateLimit(
+      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
+      validated.rpm
+    );
     const enriched: Lead[] = [];
 
     for (const lead of leads) {
@@ -118,7 +121,7 @@ export async function scrapeMaps(
  *
  * @param query - Full search query (e.g. "plumbers Portland OR contact")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeSearch(
@@ -149,7 +152,10 @@ export async function scrapeSearch(
 
   if (validated.enrich && leads.length > 0) {
     console.log(`Enriching ${leads.length} leads...`);
-    const throttledEnrich = withRateLimit(enrichLead, Math.min(validated.rpm, 15));
+    const throttledEnrich = withRateLimit(
+      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
+      Math.min(validated.rpm, 15)
+    );
     const enriched: Lead[] = [];
 
     for (const lead of leads) {
@@ -176,7 +182,7 @@ export async function scrapeSearch(
  * @param category - Business category (e.g. "plumbers")
  * @param location - City or neighborhood
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYelp(
@@ -213,7 +219,10 @@ export async function scrapeYelp(
   }
 
   if (validated.enrich && leads.length > 0) {
-    const throttledEnrich = withRateLimit(enrichLead, validated.rpm);
+    const throttledEnrich = withRateLimit(
+      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
+      validated.rpm
+    );
     const enriched: Lead[] = [];
 
     for (const lead of leads) {
@@ -239,7 +248,7 @@ export async function scrapeYelp(
  * @param category - Business category (e.g. "plumbers")
  * @param location - City and state
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYellowPages(
@@ -277,7 +286,10 @@ export async function scrapeYellowPages(
 
   if (validated.enrich && leads.length > 0) {
     console.log(`Enriching ${leads.length} leads...`);
-    const throttledEnrich = withRateLimit(enrichLead, validated.rpm);
+    const throttledEnrich = withRateLimit(
+      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
+      validated.rpm
+    );
     const enriched: Lead[] = [];
 
     for (const lead of leads) {
@@ -305,7 +317,7 @@ export async function scrapeYellowPages(
  *
  * @param query - Search query (e.g. "fintech" or "AI companies Portland")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy` (string or string[]) for rotation and residential proxies.
+ *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeCrunchbase(
@@ -336,7 +348,10 @@ export async function scrapeCrunchbase(
 
   if (validated.enrich && leads.length > 0) {
     console.log(`Enriching ${leads.length} leads...`);
-    const throttledEnrich = withRateLimit(enrichLead, Math.min(validated.rpm, 10));
+    const throttledEnrich = withRateLimit(
+      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
+      Math.min(validated.rpm, 10)
+    );
     const enriched: Lead[] = [];
 
     for (const lead of leads) {
@@ -389,3 +404,4 @@ export { loadConfig } from './config.js';
 export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions } from './types.js';
 export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
 export { CONFIG_PATH } from './config.js';
+export { isDisposableEmail } from './enricher.js';

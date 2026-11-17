@@ -24,6 +24,7 @@ Examples:
   $ lead-mine scrape --source=yellowpages --category="electricians" --location="Chicago, IL"
   $ lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich
   $ lead-mine scrape --category="lawyers" --location="New York, NY" --proxy="http://user-zone:pass@gate.smartproxy.com:7000"
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --verify-emails
     `
   );
 
@@ -55,6 +56,8 @@ program
   .option('--no-headless', 'Show browser window during scraping')
   .option('--enrich', 'Visit websites to discover emails and metadata (default for most sources)')
   .option('--no-enrich', 'Skip website enrichment step')
+  .option('--verify-emails', 'Verify extracted emails are not from disposable providers')
+  .option('--no-verify-emails', 'Skip email verification step')
   .addOption(
     new Option(
       '--proxy <proxies...>',
@@ -74,13 +77,21 @@ program
       const outputPath = cmdOptions.output;
       const query = cmdOptions.query || cmdOptions.category;
 
-      // Config file values are merged first; CLI flags override them
-      const scrapeOpts = ScrapeOptionsSchema.parse({
-        ...config,
+      const cliOpts: Record<string, any> = {
         limit,
         headless: cmdOptions.headless,
         enrich: cmdOptions.enrich !== false,
         proxy: cmdOptions.proxy,
+      };
+
+      if (cmdOptions.verifyEmails !== undefined) {
+        cliOpts.verifyEmails = cmdOptions.verifyEmails === true;
+      }
+
+      // Config file values are merged first; CLI flags override them
+      const scrapeOpts = ScrapeOptionsSchema.parse({
+        ...config,
+        ...cliOpts,
       });
 
       let leads: leadMine.Lead[] = [];

@@ -67,28 +67,28 @@ Visits websites to discover email patterns, social links and missing phones
 </tr>
 <tr>
 <td>
+📧 <b>Email Verification</b><br>
+Filters out emails from known disposable providers using a local domain list (configurable)
+</td>
+<td>
 ⏱️ <b>Polite Crawling</b><br>
 Built-in rate limiting, random delays, user-agent rotation and stealth to reduce blocks
 </td>
+</tr>
+<tr>
 <td>
 🎯 <b>Targeted Filters</b><br>
 Category, location, rating, review count and keyword filters for high-quality leads
 </td>
-</tr>
-<tr>
 <td>
 📋 <b>Config File</b><br>
 Persistent defaults via ~/.leadmine/config.json (CLI flags override)
 </td>
-<td>
-🔄 <b>Proxy Rotation + Residential</b><br>
-Configurable proxy lists with automatic rotation; native support for residential proxy providers (Smartproxy, Oxylabs, Bright Data gateway URLs)
-</td>
 </tr>
 <tr>
 <td>
-🧪 <b>Mockable Tests</b><br>
-Unit tests with recorded HTML fixtures so CI stays fast and reliable
+🔄 <b>Proxy Rotation + Residential</b><br>
+Configurable proxy lists with automatic rotation; native support for residential proxy providers (Smartproxy, Oxylabs, Bright Data gateway URLs)
 </td>
 <td></td>
 </tr>
@@ -123,6 +123,7 @@ const leads = await scrapeYellowPages('plumbers', 'Portland, OR', {
   ...config,
   limit: 30,
   enrich: true,
+  verifyEmails: true,
   rpm: 12,
   proxy: 'http://user:pass@residential.provider:22222',
 });
@@ -136,13 +137,13 @@ console.log(`Captured ${leads.length} leads`);
 Run the CLI (most common workflow). The CLI automatically loads defaults from `~/.leadmine/config.json` if it exists. Flags override config values.
 
 ```bash
-lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv
+lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv --verify-emails
 ```
 
 Search-focused run with enrichment:
 
 ```bash
-lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich
+lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich --verify-emails
 ```
 
 Yelp fallback when Maps coverage is thin:
@@ -155,7 +156,7 @@ YellowPages and Crunchbase examples:
 
 ```bash
 lead-mine scrape --source=yellowpages --category="electricians" --location="Chicago, IL" --limit=25
-lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich
+lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich --verify-emails
 ```
 
 Residential proxy example (rotates IPs via provider gateway):
@@ -184,6 +185,7 @@ const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
   limit: 25,
   minRating: 4.0,
   enrich: true,
+  verifyEmails: true,
   proxy: ['http://proxy1:8080', 'http://proxy2:8080'],
 });
 
@@ -203,6 +205,7 @@ const leads = await scrapeCrunchbase('AI companies', {
   headless: false,
   rpm: 8,
   enrich: true,
+  verifyEmails: true,
 });
 ```
 </details>
@@ -219,6 +222,7 @@ Example `~/.leadmine/config.json`:
 {
   "limit": 30,
   "enrich": true,
+  "verifyEmails": true,
   "rpm": 12,
   "headless": true,
   "minRating": 4.0,
@@ -231,6 +235,7 @@ Example `~/.leadmine/config.json`:
 |-------------|---------|-------------|
 | limit       | 20      | Maximum number of leads to return (`ScrapeOptionsSchema`) |
 | enrich      | true    | Visit websites to discover emails and metadata |
+| verifyEmails| false   | Filter extracted emails against a local list of known disposable domains; sets `emailVerified` on Lead records |
 | headless    | true    | Run browser without GUI (`--no-headless` to disable) |
 | rpm         | 20      | Requests per minute for rate limiting (`withRateLimit`) |
 | minRating   | —       | Filter leads by minimum rating (0–5) |
@@ -250,7 +255,7 @@ flowchart TD
     Index --> YellowPages[src/scrapers/yellowpages.ts<br>list extraction with stable classes]
     Index --> Crunchbase[src/scrapers/crunchbase.ts<br>profile scraping + website extraction]
     Maps & Search & Yelp & YellowPages & Crunchbase --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit]
-    Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction]
+    Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction + disposable checker]
     Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
     Dedup --> Export[exporter.ts<br>csv-writer / xlsx / JSON]
@@ -269,7 +274,7 @@ flowchart TD
 │   ├── cli.ts            # Commander.js command definition with all flags
 │   ├── config.ts         # loadConfig() + CONFIG_PATH for ~/.leadmine/config.json
 │   ├── types.ts          # Lead interface, ScrapeOptions, Zod schema, ExportFormat, ConfigOptions
-│   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:)
+│   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:) + isDisposableEmail()
 │   ├── exporter.ts       # exportLeads() using csv-writer, xlsx, fs
 │   ├── scrapers/
 │   │   ├── maps.ts       # scrapeGoogleMaps() + extractFromSidePanel
@@ -293,7 +298,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()` helper, new proxy rotation behaviour, and the YellowPages/Crunchbase parsers.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()` helper, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, and the new disposable email verification logic.
 
 ## 📍 Roadmap
 
@@ -302,7 +307,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Add configuration file support (~/.leadmine/config.json)
 - [x] Implement proxy rotation and residential proxy interface
 - [x] Add more directory scrapers (YellowPages, Crunchbase)
-- [ ] Email verification step using disposable checker or SMTP
+- [x] Email verification step using disposable checker or SMTP
 - [ ] Interactive wizard mode for first-time users
 - [ ] Google Sheets direct export via service account
 - [ ] Local LLM lead scoring with Ollama (relevance, budget signals)

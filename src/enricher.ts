@@ -3,6 +3,57 @@ import { launchStealthBrowser, getRandomUserAgent } from './utils/browser.js';
 import { randomDelay } from './utils/throttle.js';
 import type { Lead } from './types.js';
 
+const DISPOSABLE_DOMAINS = new Set<string>([
+  '10minutemail.com',
+  '20minutemail.com',
+  '30minutemail.com',
+  'tempmail.com',
+  'temp-mail.org',
+  'guerrillamail.com',
+  'guerrillamail.net',
+  'guerrillamail.org',
+  'mailinator.com',
+  'mailinator2.com',
+  'yopmail.com',
+  'yopmail.fr',
+  'sharklasers.com',
+  'throwawaymail.com',
+  'trashmail.com',
+  'getairmail.com',
+  'maildrop.cc',
+  'dispostable.com',
+  'fakeinbox.com',
+  'mytrashmail.com',
+  'temporary-mail.net',
+  'tempail.com',
+  'mohmal.com',
+  'mail.tm',
+  'tempmailaddress.com',
+  'discard.email',
+  'spamgourmet.com',
+  'spam4.me',
+  'fake-mail.com',
+  'hide-mail.net',
+]);
+
+/**
+ * Returns true if an email is from a known disposable provider or fails basic
+ * validation. Uses a local Set of domains + heuristic patterns. No network calls.
+ */
+export function isDisposableEmail(email: string): boolean {
+  if (typeof email !== 'string' || !email.includes('@')) {
+    return true;
+  }
+  const domain = email.split('@')[1]!.toLowerCase().trim();
+  if (DISPOSABLE_DOMAINS.has(domain)) {
+    return true;
+  }
+  if (/^(temp|throw|dispos|fake|trash|spam|junk|hide|tempail|[0-9]{1,3}\.)/i.test(domain)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Enriches a single lead by visiting its website (when present) and extracting
  * additional contact data — primarily email addresses via mailto: links, regex
@@ -12,12 +63,16 @@ import type { Lead } from './types.js';
  * the original lead unchanged. Uses a fresh stealth browser context per lead
  * to minimize fingerprinting and blocks.
  *
+ * If verifyEmails is enabled, disposable/temporary emails are discarded and
+ * emailVerified is set on the returned Lead.
+ *
  * @param lead - Lead record (must contain a valid website to perform enrichment)
- * @returns Promise resolving to an enriched Lead (email, phone, address may be added)
+ * @param verifyEmails - Whether to filter out disposable email addresses
+ * @returns Promise resolving to an enriched Lead (email, phone, address, emailVerified may be added)
  */
-export async function enrichLead(lead: Lead): Promise<Lead> {
+export async function enrichLead(lead: Lead, verifyEmails: boolean = false): Promise<Lead> {
   if (!lead.website || !lead.website.startsWith('http')) {
-    return { ...lead };
+    return { ...lead, emailVerified: lead.emailVerified ?? (lead.email ? !isDisposableEmail(lead.email) : undefined) };
   }
 
   let browser: Browser | null = null;
@@ -45,11 +100,24 @@ export async function enrichLead(lead: Lead): Promise<Lead> {
 
     const extra = await extractEnrichedInfo(page);
 
+    let email = extra.email || lead.email;
+    let emailVerified: boolean | undefined = undefined;
+
+    if (email) {
+      const isDisposable = isDisposableEmail(email);
+      emailVerified = !isDisposable;
+      if (verifyEmails && isDisposable) {
+        console.log(`   📧 Disposable email detected and skipped for "${lead.name}"`);
+        email = undefined;
+      }
+    }
+
     const enriched: Lead = {
       ...lead,
-      email: extra.email || lead.email,
+      email,
       phone: extra.phone || lead.phone,
       address: extra.address || lead.address,
+      emailVerified,
       scrapedAt: new Date().toISOString(),
     };
 

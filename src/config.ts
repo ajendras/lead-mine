@@ -15,8 +15,8 @@ export const CONFIG_PATH = path.join(os.homedir(), '.leadmine', 'config.json');
  *
  * If the file does not exist, returns an empty object (no defaults applied).
  * Validation errors are logged as warnings and result in an empty object.
- * All fields from ScrapeOptions are supported. CLI flags and explicit
- * function arguments override values from the config file.
+ * All fields from ScrapeOptions are supported (including verifyEmails).
+ * CLI flags and explicit function arguments override values from the config file.
  */
 export async function loadConfig(
   configPath: string = CONFIG_PATH
