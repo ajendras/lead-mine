@@ -107,7 +107,7 @@ export async function extractYellowPagesResults(page: Page, max: number): Promis
       if (ratingEl) {
         const text = ratingEl.getAttribute('aria-label') || ratingEl.textContent || '';
         const match = text.match(/(\d\.\d)/);
-        if (match) rating = parseFloat(match[1]);
+        if (match && match[1]) rating = parseFloat(match[1]);
       }
 
       results.push({
