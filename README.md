@@ -239,12 +239,15 @@ const leads = await scrapeCrunchbase('AI companies', {
 
 The easiest way to create your configuration is by running `lead-mine wizard`. It will interactively ask questions and write a ready-to-use `~/.leadmine/config.json`.
 
-LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually or via the wizard). Any `ScrapeOptions` can be set here. Command-line flags and programmatic options take precedence.
+LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually or via the wizard). Any `ScrapeOptions` (including `source`, `category` and `location`) can be set here. Command-line flags and programmatic options take precedence.
 
 Example `~/.leadmine/config.json`:
 
 ```json
 {
+  "source": "maps",
+  "category": "plumbers",
+  "location": "Portland, OR",
   "limit": 30,
   "enrich": true,
   "verifyEmails": true,
@@ -256,16 +259,19 @@ Example `~/.leadmine/config.json`:
 }
 ```
 
-| Option      | Default | Description |
-|-------------|---------|-------------|
-| limit       | 20      | Maximum number of leads to return (`ScrapeOptionsSchema`) |
-| enrich      | true    | Visit websites to discover emails and metadata |
-| verifyEmails| false   | Filter extracted emails against a local list of known disposable domains; sets `emailVerified` on Lead records |
-| headless    | true    | Run browser without GUI (`--no-headless` to disable) |
-| rpm         | 20      | Requests per minute for rate limiting (`withRateLimit`) |
-| minRating   | —       | Filter leads by minimum rating (0–5) |
-| userAgent   | —       | Override default stealth user agent |
-| proxy       | —       | Single proxy URL or array of URLs for rotation. Residential proxies supported via provider gateway (e.g. `http://user-zone-resi:pass@gate.smartproxy.com:7000`). Rotates automatically across browser sessions. |
+| Option      | Default       | Description |
+|-------------|---------------|-------------|
+| source      | maps          | Default scraper source (maps, search, yelp, yellowpages, crunchbase) |
+| category    | —             | Default business category or search term |
+| location    | Portland, OR  | Default geographic location for directory scrapers |
+| limit       | 20            | Maximum number of leads to return (`ScrapeOptionsSchema`) |
+| enrich      | true          | Visit websites to discover emails and metadata |
+| verifyEmails| false         | Filter extracted emails against a local list of known disposable domains; sets `emailVerified` on Lead records |
+| headless    | true          | Run browser without GUI (`--no-headless` to disable) |
+| rpm         | 20            | Requests per minute for rate limiting (`withRateLimit`) |
+| minRating   | —             | Filter leads by minimum rating (0–5) |
+| userAgent   | —             | Override default stealth user agent |
+| proxy       | —             | Single proxy URL or array of URLs for rotation. Residential proxies supported via provider gateway (e.g. `http://user-zone-resi:pass@gate.smartproxy.com:7000`). Rotates automatically across browser sessions. |
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command, Option } from 'commander';
 import * as leadMine from './index.js';
-import { type ScrapeSource, ScrapeOptionsSchema } from './types.js';
+import { type ScrapeSource, ScrapeOptionsSchema, type ScrapeOptions } from './types.js';
 import { z } from 'zod';
 import * as readline from 'node:readline/promises';
 
@@ -188,7 +188,7 @@ program
       if (Number.isNaN(limit) || limit < 5) limit = 25;
       if (limit > 100) limit = 100;
 
-      const config: Partial<leadMine.ScrapeOptions> = {
+      const config: Partial<ScrapeOptions> = {
         source,
         category: category.trim(),
         location: location.trim(),
