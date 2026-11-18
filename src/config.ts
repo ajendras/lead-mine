@@ -49,3 +49,32 @@ export async function loadConfig(
     return {};
   }
 }
+
+/**
+ * Saves a partial configuration to the user config file.
+ *
+ * Creates the parent directory (~/.leadmine) if it does not exist.
+ * Validates values against the ScrapeOptions schema (partial + passthrough)
+ * before writing a clean JSON file. Used by the interactive wizard and
+ * can be called programmatically.
+ */
+export async function saveConfig(
+  config: Partial<ScrapeOptions>,
+  configPath: string = CONFIG_PATH
+): Promise<void> {
+  try {
+    const dir = path.dirname(configPath);
+    await fs.mkdir(dir, { recursive: true });
+
+    const PartialConfigSchema = ScrapeOptionsSchema.partial().passthrough();
+    const validated = PartialConfigSchema.parse(config);
+
+    await fs.writeFile(configPath, JSON.stringify(validated, null, 2), 'utf8');
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      throw new Error(`Invalid configuration values: ${err.errors[0]?.message}`);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to save configuration to ${configPath}: ${message}`);
+  }
+}

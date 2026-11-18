@@ -3,6 +3,7 @@ import { Command, Option } from 'commander';
 import * as leadMine from './index.js';
 import { type ScrapeSource, ScrapeOptionsSchema } from './types.js';
 import { z } from 'zod';
+import * as readline from 'node:readline/promises';
 
 const program = new Command();
 
@@ -18,6 +19,7 @@ program
     'after',
     `
 Examples:
+  $ lead-mine wizard
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv
   $ lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich
   $ lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA" --limit=15
@@ -144,6 +146,121 @@ program
         console.error(error);
       }
       process.exit(1);
+    }
+  });
+
+program
+  .command('wizard')
+  .description('Interactive setup wizard for first-time users')
+  .action(async () => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const question = (text: string): Promise<string> => rl.question(`\n${text} `);
+
+    try {
+      console.log('\n🪄 Welcome to the LeadMine Interactive Wizard!');
+      console.log(
+        'This guided mode creates a config file with your preferences and runs a sample scrape.\n'
+      );
+
+      const sourceChoice = await question(
+        'Primary source? (maps/search/yelp/yellowpages/crunchbase) [maps]:'
+      );
+      const source = ((sourceChoice.trim() || 'maps') as ScrapeSource).toLowerCase() as ScrapeSource;
+
+      const category =
+        (await question('Default business category? (e.g. plumbers) [plumbers]:')) || 'plumbers';
+
+      const location =
+        (await question('Default location? (e.g. Portland, OR) [Portland, OR]:')) || 'Portland, OR';
+
+      const enrichAnswer = await question('Enable website enrichment by default? (Y/n):');
+      const enrich = !enrichAnswer.toLowerCase().startsWith('n');
+
+      const verifyAnswer = await question('Enable email verification? (Y/n):');
+      const verifyEmails = !verifyAnswer.toLowerCase().startsWith('n');
+
+      const limitAnswer = await question('Default number of leads? [25]:');
+      let limit = parseInt(limitAnswer.trim(), 10);
+      if (Number.isNaN(limit) || limit < 5) limit = 25;
+      if (limit > 100) limit = 100;
+
+      const config: Partial<leadMine.ScrapeOptions> = {
+        source,
+        category: category.trim(),
+        location: location.trim(),
+        limit,
+        enrich,
+        verifyEmails,
+        headless: true,
+        rpm: 15,
+        minRating: 4.0,
+      };
+
+      await leadMine.saveConfig(config);
+
+      console.log(`\n✅ Configuration saved to ${leadMine.CONFIG_PATH}`);
+      console.log('\nYou can edit this file anytime to update defaults.');
+      console.log('\nSaved values:');
+      console.log(JSON.stringify(config, null, 2));
+
+      const runAnswer = await question('\nRun a sample scrape now using these settings? (Y/n):');
+      if (!runAnswer.toLowerCase().startsWith('n')) {
+        console.log('\n🚀 Running your first scrape...');
+
+        const scrapeOpts = ScrapeOptionsSchema.parse({
+          ...config,
+          limit,
+        });
+
+        let leads: leadMine.Lead[] = [];
+        const cat = config.category!;
+        const loc = config.location!;
+        const query = `${cat} ${loc}`;
+
+        switch (source) {
+          case 'maps':
+            leads = await leadMine.scrapeMaps(cat, loc, scrapeOpts);
+            break;
+          case 'search':
+            leads = await leadMine.scrapeSearch(query, scrapeOpts);
+            break;
+          case 'yelp':
+            leads = await leadMine.scrapeYelp(cat, loc, scrapeOpts);
+            break;
+          case 'yellowpages':
+            leads = await leadMine.scrapeYellowPages(cat, loc, scrapeOpts);
+            break;
+          case 'crunchbase':
+            leads = await leadMine.scrapeCrunchbase(query, scrapeOpts);
+            break;
+          default:
+            leads = await leadMine.scrapeMaps(cat, loc, scrapeOpts);
+        }
+
+        const outputPath = 'sample-leads.csv';
+        await leadMine.saveLeads(leads, outputPath);
+        console.log(
+          `\n🎉 Done! Captured ${leads.length} leads and saved them to ${outputPath}.`
+        );
+        console.log('Open the CSV to explore your leads.');
+      } else {
+        console.log(
+          '\nRun scrapes anytime with: lead-mine scrape --category="roofers" --location="Austin, TX"'
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(`\n❌ Wizard error: ${error.message}`);
+      } else {
+        console.error('\n❌ An unknown error occurred in the wizard.');
+      }
+      process.exit(1);
+    } finally {
+      rl.close();
     }
   });
 

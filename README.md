@@ -92,6 +92,13 @@ Configurable proxy lists with automatic rotation; native support for residential
 </td>
 <td></td>
 </tr>
+<tr>
+<td>
+🪄 <b>Interactive Wizard</b><br>
+Guided first-time setup that creates ~/.leadmine/config.json and runs a sample scrape
+</td>
+<td></td>
+</tr>
 </table>
 
 ## 📦 Installation
@@ -113,6 +120,14 @@ npm run build
 
 ## ⚡ Quick start
 
+Run the interactive wizard (recommended for first-time users):
+
+```bash
+lead-mine wizard
+```
+
+It will ask a few questions, create a config file with your preferences, and run a sample scrape so you can see results immediately.
+
 ```ts
 import { loadConfig, scrapeMaps, scrapeYellowPages, saveLeads } from 'lead-mine';
 
@@ -133,6 +148,14 @@ console.log(`Captured ${leads.length} leads`);
 ```
 
 ## 🧰 Usage
+
+**Interactive Wizard (recommended for first-time users)**
+
+```bash
+lead-mine wizard
+```
+
+The wizard guides you through choosing a default source, category, location, enrichment settings and more. It creates `~/.leadmine/config.json` and runs a sample scrape so you can see results right away.
 
 Run the CLI (most common workflow). The CLI automatically loads defaults from `~/.leadmine/config.json` if it exists. Flags override config values.
 
@@ -214,7 +237,9 @@ const leads = await scrapeCrunchbase('AI companies', {
 
 **Configuration File**
 
-LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually). Any `ScrapeOptions` can be set here. Command-line flags and programmatic options take precedence.
+The easiest way to create your configuration is by running `lead-mine wizard`. It will interactively ask questions and write a ready-to-use `~/.leadmine/config.json`.
+
+LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually or via the wizard). Any `ScrapeOptions` can be set here. Command-line flags and programmatic options take precedence.
 
 Example `~/.leadmine/config.json`:
 
@@ -270,9 +295,9 @@ flowchart TD
 ```text
 .
 ├── src/
-│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), loadConfig()
-│   ├── cli.ts            # Commander.js command definition with all flags
-│   ├── config.ts         # loadConfig() + CONFIG_PATH for ~/.leadmine/config.json
+│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), loadConfig(), saveConfig()
+│   ├── cli.ts            # Commander.js command definition with all flags + interactive wizard
+│   ├── config.ts         # loadConfig(), saveConfig() + CONFIG_PATH for ~/.leadmine/config.json
 │   ├── types.ts          # Lead interface, ScrapeOptions, Zod schema, ExportFormat, ConfigOptions
 │   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:) + isDisposableEmail()
 │   ├── exporter.ts       # exportLeads() using csv-writer, xlsx, fs
@@ -298,7 +323,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()` helper, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, and the new disposable email verification logic.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, and the interactive wizard.
 
 ## 📍 Roadmap
 
@@ -308,7 +333,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Implement proxy rotation and residential proxy interface
 - [x] Add more directory scrapers (YellowPages, Crunchbase)
 - [x] Email verification step using disposable checker or SMTP
-- [ ] Interactive wizard mode for first-time users
+- [x] Interactive wizard mode for first-time users
 - [ ] Google Sheets direct export via service account
 - [ ] Local LLM lead scoring with Ollama (relevance, budget signals)
 - [ ] Parallel browser contexts with worker pool
