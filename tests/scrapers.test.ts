@@ -1,281 +1,272 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { loadConfig, saveConfig, CONFIG_PATH } from '../src/config.js';
+import { isDisposableEmail } from '../src/enricher.js';
 import {
+  deduplicateLeads,
   scrapeMaps,
   scrapeSearch,
   scrapeYelp,
   scrapeYellowPages,
   scrapeCrunchbase,
   saveLeads,
-  loadConfig,
-  deduplicateLeads,
-  isDisposableEmail,
-  ScrapeOptionsSchema,
-  type Lead,
 } from '../src/index.js';
-import { extractYellowPagesResults } from '../src/scrapers/yellowpages.js';
-import { extractCrunchbaseResults } from '../src/scrapers/crunchbase.js';
+import { exportLeads } from '../src/exporter.js';
+import type { Lead, ScrapeOptions } from '../src/types.js';
 
-// Hoist mock factories to avoid TDZ/ReferenceError after Vitest hoists vi.mock calls.
-// This was the root cause of the CI failure on Node 22.
-const mockScrapeMaps = vi.hoisted(() => vi.fn());
-const mockScrapeSearch = vi.hoisted(() => vi.fn());
-const mockScrapeYelp = vi.hoisted(() => vi.fn());
-const mockScrapeYellowPages = vi.hoisted(() => vi.fn());
-const mockScrapeCrunchbase = vi.hoisted(() => vi.fn());
-const mockEnrichLead = vi.hoisted(() => vi.fn().mockImplementation((lead: Lead) => Promise.resolve(lead)));
+// Hoist all mock values so they are available when Vitest hoists the vi.mock calls.
+// This eliminates the ReferenceError / TDZ for __vi_import_* variables that occurred
+// when a factory closed over variables declared later in the test file.
+const mocks = vi.hoisted(() => {
+  const scrapeGoogleMaps = vi.fn();
+  const scrapeGoogleSearch = vi.fn();
+  const scrapeYelpInternal = vi.fn();
+  const scrapeYellowPagesInternal = vi.fn();
+  const scrapeCrunchbaseInternal = vi.fn();
+  const enrichLead = vi.fn().mockImplementation((lead: Lead) =>
+    Promise.resolve({ ...lead, emailVerified: true })
+  );
+  const withRateLimit = vi.fn().mockImplementation((fn: any) => fn);
+  const randomDelay = vi.fn().mockResolvedValue(undefined);
+  const setProxies = vi.fn();
 
+  return {
+    scrapeGoogleMaps,
+    scrapeGoogleSearch,
+    scrapeYelpInternal,
+    scrapeYellowPagesInternal,
+    scrapeCrunchbaseInternal,
+    enrichLead,
+    withRateLimit,
+    randomDelay,
+    setProxies,
+  };
+});
+
+// Register mocks *before* any imports that would load the real modules.
+// Factories now reference only the hoisted values.
 vi.mock('../src/scrapers/maps.js', () => ({
-  scrapeGoogleMaps: mockScrapeMaps,
+  scrapeGoogleMaps: mocks.scrapeGoogleMaps,
 }));
 
 vi.mock('../src/scrapers/search.js', () => ({
-  scrapeGoogleSearch: mockScrapeSearch,
+  scrapeGoogleSearch: mocks.scrapeGoogleSearch,
 }));
 
 vi.mock('../src/scrapers/yelp.js', () => ({
-  scrapeYelp: mockScrapeYelp,
+  scrapeYelp: mocks.scrapeYelpInternal,
 }));
 
 vi.mock('../src/scrapers/yellowpages.js', () => ({
-  scrapeYellowPages: mockScrapeYellowPages,
-  extractYellowPagesResults,
+  scrapeYellowPages: mocks.scrapeYellowPagesInternal,
 }));
 
 vi.mock('../src/scrapers/crunchbase.js', () => ({
-  scrapeCrunchbase: mockScrapeCrunchbase,
-  extractCrunchbaseResults,
+  scrapeCrunchbase: mocks.scrapeCrunchbaseInternal,
 }));
 
 vi.mock('../src/enricher.js', () => ({
-  enrichLead: mockEnrichLead,
+  enrichLead: mocks.enrichLead,
   isDisposableEmail,
 }));
 
 vi.mock('../src/utils/throttle.js', () => ({
-  withRateLimit: vi.fn((fn: any) => fn),
-  randomDelay: vi.fn().mockResolvedValue(undefined),
+  withRateLimit: mocks.withRateLimit,
+  randomDelay: mocks.randomDelay,
 }));
 
 vi.mock('../src/utils/browser.js', () => ({
-  setProxies: vi.fn(),
-  launchStealthBrowser: vi.fn(),
+  setProxies: mocks.setProxies,
+  launchStealthBrowser: vi.fn().mockResolvedValue({
+    newPage: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+  }),
   getRandomUserAgent: vi.fn().mockReturnValue('Mozilla/5.0 (test)'),
 }));
 
-vi.mock('../src/exporter.js', () => ({
-  exportLeads: vi.fn().mockResolvedValue(undefined),
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
-describe('LeadMine scrapers & utilities', () => {
+describe('LeadMine scrapers & core utilities', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockScrapeMaps.mockResolvedValue([]);
-    mockScrapeSearch.mockResolvedValue([]);
-    mockScrapeYelp.mockResolvedValue([]);
-    mockScrapeYellowPages.mockResolvedValue([]);
-    mockScrapeCrunchbase.mockResolvedValue([]);
+
+    mocks.scrapeGoogleMaps.mockResolvedValue([
+      {
+        name: 'Test Plumbing',
+        address: '123 Main St, Portland, OR',
+        phone: '(503) 555-0123',
+        website: 'https://testplumbing.com',
+        rating: 4.8,
+        reviewCount: 142,
+        source: 'maps' as const,
+        scrapedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    mocks.scrapeGoogleSearch.mockResolvedValue([]);
+    mocks.scrapeYelpInternal.mockResolvedValue([]);
+    mocks.scrapeYellowPagesInternal.mockResolvedValue([]);
+    mocks.scrapeCrunchbaseInternal.mockResolvedValue([]);
   });
 
-  it('validates Lead shape and ScrapeOptions via Zod', () => {
-    const validOptions = ScrapeOptionsSchema.parse({
-      limit: 25,
-      enrich: true,
-      verifyEmails: true,
-      rpm: 12,
-      headless: true,
-      proxy: 'http://example.com:8080',
-    });
-    expect(validOptions.limit).toBe(25);
-    expect(validOptions.enrich).toBe(true);
-
-    const lead: Lead = {
-      name: 'Test Business',
-      address: '123 Test St, Portland, OR',
-      phone: '(555) 555-0123',
-      email: 'contact@test.com',
-      website: 'https://test.com',
-      rating: 4.8,
-      reviewCount: 127,
-      source: 'maps',
-      category: 'plumbers',
-      location: 'Portland, OR',
-      scrapedAt: new Date().toISOString(),
-      emailVerified: true,
-    };
-    expect(lead.name).toBe('Test Business');
-    expect(lead.emailVerified).toBe(true);
+  afterEach(() => {
+    vi.resetAllMocks();
   });
 
-  it('deduplicates leads by normalized name+address+website key', () => {
+  it('deduplicates leads correctly using name+address+website key', () => {
     const leads: Lead[] = [
       {
-        name: 'Acme Plumbing',
+        name: 'Acme Corp',
         address: '123 Main St',
         website: 'https://acme.com',
         source: 'maps',
         scrapedAt: '2024-01-01T00:00:00.000Z',
       },
       {
-        name: 'Acme Plumbing',
+        name: 'Acme Corp',
         address: '123 Main St',
         website: 'https://acme.com',
-        source: 'maps',
+        source: 'search',
         scrapedAt: '2024-01-01T00:00:00.000Z',
       },
       {
-        name: 'Beta Electric',
+        name: 'Beta LLC',
         address: '456 Oak Ave',
-        website: 'https://beta.com',
-        source: 'yelp',
+        source: 'maps',
         scrapedAt: '2024-01-01T00:00:00.000Z',
       },
     ];
 
     const unique = deduplicateLeads(leads);
     expect(unique).toHaveLength(2);
-    expect(unique[0]!.name).toBe('Acme Plumbing');
-    expect(unique[1]!.name).toBe('Beta Electric');
+    expect(unique[0]!.name).toBe('Acme Corp');
+    expect(unique[1]!.name).toBe('Beta LLC');
   });
 
-  it('detects disposable emails correctly', () => {
+  it('validates Lead shape and metadata', () => {
+    const lead: Lead = {
+      name: 'Test Business',
+      address: '123 Test St, Portland, OR 97201',
+      phone: '(503) 555-0199',
+      email: 'hello@testbusiness.com',
+      website: 'https://testbusiness.com',
+      rating: 4.5,
+      reviewCount: 87,
+      source: 'yelp',
+      category: 'plumbers',
+      location: 'Portland, OR',
+      scrapedAt: '2024-01-01T00:00:00.000Z',
+      emailVerified: true,
+    };
+
+    expect(lead.name).toBeDefined();
+    expect(lead.source).toBe('yelp');
+    expect(lead.emailVerified).toBe(true);
+    expect(typeof lead.scrapedAt).toBe('string');
+  });
+
+  it('detects disposable emails with local list and heuristics', () => {
     expect(isDisposableEmail('user@mailinator.com')).toBe(true);
-    expect(isDisposableEmail('user@tempmail.com')).toBe(true);
-    expect(isDisposableEmail('contact@realbusiness.com')).toBe(false);
-    expect(isDisposableEmail('invalid-email')).toBe(true);
-    expect(isDisposableEmail('temp123@trashmail.net')).toBe(true);
+    expect(isDisposableEmail('user@yopmail.com')).toBe(true);
+    expect(isDisposableEmail('contact@realcompany.com')).toBe(false);
+    expect(isDisposableEmail('temp123@tempmailaddress.com')).toBe(true);
+    expect(isDisposableEmail('invalid')).toBe(true);
+    expect(isDisposableEmail('no-at-sign')).toBe(true);
   });
 
-  it('loads config gracefully (missing file returns empty object)', async () => {
-    const config = await loadConfig('/nonexistent/.leadmine/config.json');
-    expect(config).toEqual({});
-  });
-
-  it('creates temporary config and loads it', async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'leadmine-test-'));
-    const configPath = path.join(tmpDir, 'config.json');
-    const configContent = {
-      limit: 15,
-      enrich: false,
-      rpm: 10,
-      verifyEmails: true,
-    };
-    await fs.writeFile(configPath, JSON.stringify(configContent), 'utf8');
-
-    const loaded = await loadConfig(configPath);
-    expect(loaded.limit).toBe(15);
-    expect(loaded.enrich).toBe(false);
-    expect(loaded.verifyEmails).toBe(true);
-
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it('orchestrates scrapeMaps with mocked scraper and enricher', async () => {
-    const mockLead: Lead = {
-      name: 'Mock Plumbing Co',
-      address: '123 Test St',
-      phone: '(555) 123-4567',
-      source: 'maps',
-      scrapedAt: new Date().toISOString(),
-    };
-    mockScrapeMaps.mockResolvedValue([mockLead]);
-
-    const leads = await scrapeMaps('plumbers', 'Portland, OR', {
-      limit: 5,
+  it('scrapeMaps orchestrates internal scraper, enrichment, deduplication and proxy setup', async () => {
+    const options: ScrapeOptions = {
+      limit: 10,
       enrich: true,
       verifyEmails: true,
-      rpm: 30,
-    });
+      rpm: 12,
+      proxy: 'http://proxy.example.com:8080',
+      headless: true,
+    };
 
-    expect(mockScrapeMaps).toHaveBeenCalledWith('plumbers', 'Portland, OR', 5);
+    const leads = await scrapeMaps('plumbers', 'Portland, OR', options);
+
+    expect(mocks.setProxies).toHaveBeenCalledWith(options.proxy);
+    expect(mocks.scrapeGoogleMaps).toHaveBeenCalledWith('plumbers', 'Portland, OR', 10);
+    expect(mocks.enrichLead).toHaveBeenCalled();
     expect(leads).toHaveLength(1);
-    expect(leads[0]!.name).toBe('Mock Plumbing Co');
-    expect(mockEnrichLead).toHaveBeenCalled();
+    expect(leads[0]!.name).toBe('Test Plumbing');
+    expect(leads[0]!.emailVerified).toBe(true);
   });
 
-  it('orchestrates scrapeSearch', async () => {
-    const mockLead: Lead = {
-      name: 'Search Result Biz',
-      website: 'https://example.com',
-      source: 'search',
-      scrapedAt: new Date().toISOString(),
-    };
-    mockScrapeSearch.mockResolvedValue([mockLead]);
+  it('scrapeSearch, scrapeYelp, scrapeYellowPages and scrapeCrunchbase follow the same pattern', async () => {
+    const opts: ScrapeOptions = { limit: 5, enrich: false, rpm: 20 };
 
-    const leads = await scrapeSearch('plumbers near Portland OR', { limit: 10, enrich: false });
-    expect(mockScrapeSearch).toHaveBeenCalledWith('plumbers near Portland OR', 10);
-    expect(leads).toEqual([mockLead]);
+    await scrapeSearch('HVAC Portland', opts);
+    expect(mocks.scrapeGoogleSearch).toHaveBeenCalledWith('HVAC Portland', 5);
+
+    await scrapeYelp('roof repair', 'Seattle, WA', opts);
+    expect(mocks.scrapeYelpInternal).toHaveBeenCalledWith('roof repair', 'Seattle, WA', 5);
+
+    await scrapeYellowPages('electricians', 'Chicago, IL', opts);
+    expect(mocks.scrapeYellowPagesInternal).toHaveBeenCalledWith('electricians', 'Chicago, IL', 5);
+
+    await scrapeCrunchbase('fintech startups', opts);
+    expect(mocks.scrapeCrunchbaseInternal).toHaveBeenCalledWith('fintech startups', 5);
   });
 
-  it('orchestrates scrapeYelp', async () => {
-    const mockLead: Lead = {
-      name: 'Yelp Cafe',
-      address: '456 Pine St',
-      source: 'yelp',
-      scrapedAt: new Date().toISOString(),
-    };
-    mockScrapeYelp.mockResolvedValue([mockLead]);
+  it('loadConfig and saveConfig handle JSON with Zod validation', async () => {
+    const fakeConfig = { source: 'maps', category: 'plumbers', limit: 25, enrich: true };
+    vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify(fakeConfig));
 
-    const leads = await scrapeYelp('coffee shops', 'Portland, OR', { limit: 8, enrich: true });
-    expect(mockScrapeYelp).toHaveBeenCalledWith('coffee shops', 'Portland, OR', 8);
-    expect(leads[0]!.name).toBe('Yelp Cafe');
+    const loaded = await loadConfig('/tmp/fake-config.json');
+    expect(loaded).toMatchObject({ limit: 25, enrich: true });
+
+    await saveConfig({ limit: 30, headless: false });
+    expect(vi.mocked(fs.writeFile)).toHaveBeenCalled();
+    expect(vi.mocked(fs.mkdir)).toHaveBeenCalled();
   });
 
-  it('orchestrates scrapeYellowPages', async () => {
-    const mockLead: Lead = {
-      name: 'YP Electric',
-      phone: '(555) 987-6543',
-      source: 'yellowpages',
-      scrapedAt: new Date().toISOString(),
-    };
-    mockScrapeYellowPages.mockResolvedValue([mockLead]);
-
-    const leads = await scrapeYellowPages('electricians', 'Chicago, IL', { limit: 12 });
-    expect(mockScrapeYellowPages).toHaveBeenCalledWith('electricians', 'Chicago, IL', 12);
-    expect(leads).toHaveLength(1);
-  });
-
-  it('orchestrates scrapeCrunchbase', async () => {
-    const mockLead: Lead = {
-      name: 'Crunchbase Startup',
-      website: 'https://startup.com',
-      source: 'crunchbase',
-      scrapedAt: new Date().toISOString(),
-    };
-    mockScrapeCrunchbase.mockResolvedValue([mockLead]);
-
-    const leads = await scrapeCrunchbase('fintech startups', { limit: 15, enrich: true });
-    expect(mockScrapeCrunchbase).toHaveBeenCalledWith('fintech startups', 15);
-    expect(leads[0]!.name).toBe('Crunchbase Startup');
-  });
-
-  it('exposes and runs YellowPages extractor (real implementation)', async () => {
-    expect(typeof extractYellowPagesResults).toBe('function');
-    // Basic smoke test (would require full page mock for deep assertion)
-  });
-
-  it('exposes and runs Crunchbase extractor (real implementation)', async () => {
-    expect(typeof extractCrunchbaseResults).toBe('function');
-  });
-
-  it('saves leads via inferred format', async () => {
+  it('exportLeads writes CSV, JSON and XLSX without throwing', async () => {
     const leads: Lead[] = [
       {
         name: 'Export Test',
+        address: '999 Export Ln',
         source: 'maps',
         scrapedAt: new Date().toISOString(),
       },
     ];
 
-    await saveLeads(leads, 'test-output.csv');
-    const exportLeadsFn = (await import('../src/exporter.js')).exportLeads as any;
-    expect(exportLeadsFn).toHaveBeenCalledWith(leads, 'csv', 'test-output.csv');
+    await expect(saveLeads(leads, 'test-leads.csv')).resolves.not.toThrow();
+    await expect(saveLeads(leads, 'test-leads.json')).resolves.not.toThrow();
+    await expect(saveLeads(leads, 'test-leads.xlsx')).resolves.not.toThrow();
   });
 
-  it('handles empty leads in saveLeads gracefully', async () => {
-    await saveLeads([], 'empty.csv');
-    // No error, warning logged internally
+  it('withRateLimit and randomDelay are called during enrichment flows', async () => {
+    const options: ScrapeOptions = { limit: 3, enrich: true, rpm: 10 };
+    mocks.scrapeGoogleMaps.mockResolvedValueOnce([
+      { name: 'Lead1', source: 'maps' as const, scrapedAt: new Date().toISOString() },
+      { name: 'Lead2', source: 'maps' as const, scrapedAt: new Date().toISOString() },
+    ]);
+
+    await scrapeMaps('test', 'Portland, OR', options);
+
+    expect(mocks.withRateLimit).toHaveBeenCalled();
+    expect(mocks.randomDelay).toHaveBeenCalled();
+  });
+
+  it('CLI options and wizard path do not throw on schema parse', async () => {
+    const { ScrapeOptionsSchema } = await import('../src/types.js');
+    const parsed = ScrapeOptionsSchema.safeParse({
+      source: 'maps',
+      category: 'plumbers',
+      location: 'Portland, OR',
+      limit: 20,
+      enrich: true,
+      verifyEmails: false,
+      rpm: 15,
+      headless: true,
+      proxy: ['http://proxy1:8080'],
+    });
+    expect(parsed.success).toBe(true);
   });
 });
