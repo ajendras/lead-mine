@@ -11,12 +11,18 @@ import type { ScrapeOptions } from './types.js';
 export const CONFIG_PATH = path.join(os.homedir(), '.leadmine', 'config.json');
 
 /**
+ * Default path for the Google service account key file (JSON).
+ * Used by exportToSheets when no explicit path is provided.
+ */
+export const SERVICE_ACCOUNT_PATH = path.join(os.homedir(), '.leadmine', 'service-account.json');
+
+/**
  * Loads and validates options from a JSON configuration file.
  *
  * If the file does not exist, returns an empty object (no defaults applied).
  * Validation errors are logged as warnings and result in an empty object.
  * All fields from ScrapeOptions are supported (including source, category,
- * location and verifyEmails). CLI flags and explicit function arguments
+ * location, verifyEmails and googleSheets). CLI flags and explicit function arguments
  * override values from the config file.
  */
 export async function loadConfig(

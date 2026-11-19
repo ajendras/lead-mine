@@ -27,6 +27,7 @@ Examples:
   $ lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich
   $ lead-mine scrape --category="lawyers" --location="New York, NY" --proxy="http://user-zone:pass@gate.smartproxy.com:7000"
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --verify-emails
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --sheets=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
     `
   );
 
@@ -66,6 +67,12 @@ program
       'One or more proxy URLs for rotation (http://user:pass@host:port). Residential gateway URLs supported.'
     )
   )
+  .addOption(
+    new Option(
+      '--sheets <spreadsheet-id>',
+      'Google Sheets spreadsheet ID for direct export (requires ~/.leadmine/service-account.json with Editor access)'
+    )
+  )
   .action(async (cmdOptions) => {
     try {
       const config = await leadMine.loadConfig();
@@ -88,6 +95,9 @@ program
 
       if (cmdOptions.verifyEmails !== undefined) {
         cliOpts.verifyEmails = cmdOptions.verifyEmails === true;
+      }
+      if (cmdOptions.sheets) {
+        cliOpts.googleSheets = { spreadsheetId: cmdOptions.sheets };
       }
 
       // Config file values are merged first; CLI flags override them
@@ -130,7 +140,13 @@ program
         program.error(`Unsupported source: ${source}`);
       }
 
-      await leadMine.saveLeads(leads, outputPath);
+      if (cmdOptions.sheets || scrapeOpts.googleSheets?.spreadsheetId) {
+        const sheetId = cmdOptions.sheets || scrapeOpts.googleSheets!.spreadsheetId!;
+        const sheetOpts = { ...(scrapeOpts.googleSheets || {}), spreadsheetId: sheetId };
+        await leadMine.exportToSheets(leads, sheetId, sheetOpts);
+      } else {
+        await leadMine.saveLeads(leads, outputPath);
+      }
       console.log(`\n🎉 Done. Captured ${leads.length} high-quality leads.`);
     } catch (error) {
       if (error instanceof z.ZodError) {

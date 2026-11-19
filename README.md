@@ -26,7 +26,7 @@ Freelancers, agencies and sales teams burn hours hunting prospects on Google and
 - **Self-hosted & transparent** — full visibility into every request, no vendor lock-in or surprise billing
 - **Polite by design** — built-in rate limiting, random delays, user-agent rotation and stealth via Playwright
 - **Multi-source enrichment** — Google Maps, organic Search, Yelp, YellowPages and Crunchbase with automatic website crawling for emails and missing phones
-- **Clean, flexible exports** — deduplicated leads written to CSV, JSON or XLSX with consistent columns
+- **Clean, flexible exports** — deduplicated leads written to CSV, JSON, XLSX or directly to Google Sheets
 
 ## 🎬 Demo
 
@@ -81,8 +81,8 @@ Built-in rate limiting, random delays, user-agent rotation and stealth to reduce
 Category, location, rating, review count and keyword filters for high-quality leads
 </td>
 <td>
-📋 <b>Config File</b><br>
-Persistent defaults via ~/.leadmine/config.json (CLI flags override)
+📊 <b>Google Sheets Export</b><br>
+Direct write to Google Sheets via service account (no OAuth, no extra fees)
 </td>
 </tr>
 <tr>
@@ -129,7 +129,7 @@ lead-mine wizard
 It will ask a few questions, create a config file with your preferences, and run a sample scrape so you can see results immediately.
 
 ```ts
-import { loadConfig, scrapeMaps, scrapeYellowPages, saveLeads } from 'lead-mine';
+import { loadConfig, scrapeMaps, scrapeYellowPages, saveLeads, exportToSheets } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -144,6 +144,8 @@ const leads = await scrapeYellowPages('plumbers', 'Portland, OR', {
 });
 
 await saveLeads(leads, 'leads.csv');
+// or export directly to Sheets
+// await exportToSheets(leads, '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms');
 console.log(`Captured ${leads.length} leads`);
 ```
 
@@ -182,6 +184,13 @@ lead-mine scrape --source=yellowpages --category="electricians" --location="Chic
 lead-mine scrape --source=crunchbase --query="fintech startups" --limit=15 --enrich --verify-emails
 ```
 
+Google Sheets direct export (see setup below):
+
+```bash
+lead-mine scrape --category="plumbers" --location="Portland, OR" \
+  --sheets=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms --limit=20 --enrich
+```
+
 Residential proxy example (rotates IPs via provider gateway):
 
 ```bash
@@ -199,7 +208,7 @@ lead-mine scrape --category="plumbers" --location="Portland, OR" \
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads } from 'lead-mine';
+import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -213,6 +222,8 @@ const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
 });
 
 await saveLeads(leads, 'coffee-leads.xlsx');
+// or
+// await exportToSheets(leads, 'your-spreadsheet-id-here', { sheetName: 'PortlandLeads' });
 ```
 
 <details><summary>Advanced: custom rate-limit and headless control</summary>
@@ -255,7 +266,11 @@ Example `~/.leadmine/config.json`:
   "headless": true,
   "minRating": 4.0,
   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-  "proxy": "http://user:pass@zproxy.lumproxy.com:22222"
+  "proxy": "http://user:pass@zproxy.lumproxy.com:22222",
+  "googleSheets": {
+    "spreadsheetId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+    "sheetName": "Leads"
+  }
 }
 ```
 
@@ -272,8 +287,22 @@ Example `~/.leadmine/config.json`:
 | minRating   | —             | Filter leads by minimum rating (0–5) |
 | userAgent   | —             | Override default stealth user agent |
 | proxy       | —             | Single proxy URL or array of URLs for rotation. Residential proxies supported via provider gateway (e.g. `http://user-zone-resi:pass@gate.smartproxy.com:7000`). Rotates automatically across browser sessions. |
+| googleSheets.spreadsheetId | — | Spreadsheet ID for direct Google Sheets export |
+| googleSheets.sheetName | Leads | Target sheet/tab name inside the spreadsheet |
+| googleSheets.serviceAccountKeyPath | ~/.leadmine/service-account.json | Path to service account JSON key file |
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
+
+## 🔑 Google Sheets Setup
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/), create/select a project.
+2. Enable the **Google Sheets API** under APIs & Services > Library.
+3. Navigate to IAM & Admin > Service Accounts > **Create Service Account**.
+4. Grant the **Editor** role, then create a key (JSON format) and download it.
+5. Copy the downloaded JSON to `~/.leadmine/service-account.json` (or set `googleSheets.serviceAccountKeyPath`).
+6. Open your target Google Sheet → **Share** → add the `client_email` value from the JSON file (ends in `@gserviceaccount.com`) with **Editor** permissions.
+
+LeadMine will now write leads directly to the sheet using the service account (no user login required). The first row becomes a header; existing data is overwritten.
 
 ## 🧩 Architecture
 
@@ -289,8 +318,9 @@ flowchart TD
     Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction + disposable checker]
     Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
-    Dedup --> Export[exporter.ts<br>csv-writer / xlsx / JSON]
+    Dedup --> Export[exporter.ts<br>csv-writer / xlsx / JSON / Google Sheets API]
     Export --> FS[CSV / JSON / XLSX output]
+    Export --> Google[Google Sheets via service account (googleapis)]
     style Index fill:#d9c2a3,stroke:#3f2a1e
 ```
 
@@ -301,12 +331,12 @@ flowchart TD
 ```text
 .
 ├── src/
-│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), loadConfig(), saveConfig()
+│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), exportToSheets(), loadConfig(), saveConfig()
 │   ├── cli.ts            # Commander.js command definition with all flags + interactive wizard
-│   ├── config.ts         # loadConfig(), saveConfig() + CONFIG_PATH for ~/.leadmine/config.json
-│   ├── types.ts          # Lead interface, ScrapeOptions, Zod schema, ExportFormat, ConfigOptions
+│   ├── config.ts         # loadConfig(), saveConfig() + CONFIG_PATH/SERVICE_ACCOUNT_PATH for ~/.leadmine/
+│   ├── types.ts          # Lead interface, ScrapeOptions (incl. googleSheets), Zod schema, ExportFormat
 │   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:) + isDisposableEmail()
-│   ├── exporter.ts       # exportLeads() using csv-writer, xlsx, fs
+│   ├── exporter.ts       # exportLeads() + new exportToSheets() using googleapis
 │   ├── scrapers/
 │   │   ├── maps.ts       # scrapeGoogleMaps() + extractFromSidePanel
 │   │   ├── search.ts     # scrapeGoogleSearch() + extractContactInfo
@@ -317,7 +347,7 @@ flowchart TD
 │       ├── browser.ts    # launchStealthBrowser() + setProxies() + rotation
 │       └── throttle.ts   # randomDelay(), withRateLimit()
 ├── tests/
-│   └── scrapers.test.ts  # Vitest mocks + fixture tests for parsers, dedup, export
+│   └── scrapers.test.ts  # Vitest mocks + fixture tests for parsers, dedup, export, sheets
 ├── playwright.config.ts  # Headless config, user-agent, timeouts
 ├── tsconfig.json
 └── package.json          # bin:"lead-mine", scripts, dependencies
@@ -329,7 +359,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats, CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, and the interactive wizard.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, and the interactive wizard.
 
 ## 📍 Roadmap
 
@@ -340,7 +370,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Add more directory scrapers (YellowPages, Crunchbase)
 - [x] Email verification step using disposable checker or SMTP
 - [x] Interactive wizard mode for first-time users
-- [ ] Google Sheets direct export via service account
+- [x] Google Sheets direct export via service account
 - [ ] Local LLM lead scoring with Ollama (relevance, budget signals)
 - [ ] Parallel browser contexts with worker pool
 - [ ] HTML report generator with embedded map previews

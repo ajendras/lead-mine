@@ -1,11 +1,11 @@
-import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, inferFormatFromPath } from './types.js';
+import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, inferFormatFromPath, type GoogleSheetsOptions } from './types.js';
 import { scrapeGoogleMaps } from './scrapers/maps.js';
 import { scrapeGoogleSearch } from './scrapers/search.js';
 import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
 import { scrapeYellowPages as scrapeYellowPagesInternal } from './scrapers/yellowpages.js';
 import { scrapeCrunchbase as scrapeCrunchbaseInternal } from './scrapers/crunchbase.js';
 import { enrichLead } from './enricher.js';
-import { exportLeads } from './exporter.js';
+import { exportLeads, exportToSheets } from './exporter.js';
 import { withRateLimit, randomDelay } from './utils/throttle.js';
 import { setProxies } from './utils/browser.js';
 
@@ -41,7 +41,7 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
  * @param category - Business category or search term (e.g. "plumbers", "roof repair")
  * @param location - Geographic target (e.g. "Portland, OR", "Austin, TX")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
+ *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  * @throws {Error} When category or location are missing or invalid
  */
@@ -121,7 +121,7 @@ export async function scrapeMaps(
  *
  * @param query - Full search query (e.g. "plumbers Portland OR contact")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
+ *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeSearch(
@@ -182,7 +182,7 @@ export async function scrapeSearch(
  * @param category - Business category (e.g. "plumbers")
  * @param location - City or neighborhood
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
+ *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYelp(
@@ -248,7 +248,7 @@ export async function scrapeYelp(
  * @param category - Business category (e.g. "plumbers")
  * @param location - City and state
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
+ *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYellowPages(
@@ -317,7 +317,7 @@ export async function scrapeYellowPages(
  *
  * @param query - Search query (e.g. "fintech" or "AI companies Portland")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails` and all other ScrapeOptions.
+ *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeCrunchbase(
@@ -398,10 +398,14 @@ export async function saveLeads(
   console.log('✅ Export completed.');
 }
 
-// Re-export public API, core utilities, types and configuration for consumers
+/**
+ * Export leads directly to Google Sheets.
+ * Re-exported from exporter.ts (full implementation and docs live there).
+ */
+export { exportToSheets };
+
 export { deduplicateLeads };
-export { loadConfig, saveConfig } from './config.js';
-export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions } from './types.js';
+export { loadConfig, saveConfig, CONFIG_PATH, SERVICE_ACCOUNT_PATH } from './config.js';
+export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions, GoogleSheetsOptions } from './types.js';
 export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
-export { CONFIG_PATH } from './config.js';
 export { isDisposableEmail } from './enricher.js';

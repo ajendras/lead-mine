@@ -2,7 +2,9 @@ import { createObjectCsvWriter } from 'csv-writer';
 import * as XLSX from 'xlsx';
 import * as fs from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { Lead, ExportFormat } from './types.js';
+import { google } from 'googleapis';
+import { SERVICE_ACCOUNT_PATH } from './config.js';
+import type { Lead, ExportFormat, GoogleSheetsOptions } from './types.js';
 
 /**
  * Writes an array of Lead records to disk in the requested format.
@@ -106,4 +108,114 @@ async function exportToXlsx(leads: Lead[], filepath: string): Promise<void> {
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Leads');
 
   XLSX.writeFile(workbook, filepath);
+}
+
+/**
+ * Exports leads directly to a Google Sheet using a service account.
+ *
+ * The service-account.json must be present (default: ~/.leadmine/service-account.json).
+ * The client_email inside that file must be granted Editor access on the target spreadsheet.
+ *
+ * Overwrites the target sheet starting at A1 with a header row + all leads.
+ * Creates the named sheet if it does not already exist.
+ */
+export async function exportToSheets(
+  leads: Lead[],
+  spreadsheetId: string,
+  options: Omit<GoogleSheetsOptions, 'spreadsheetId'> = {}
+): Promise<void> {
+  if (!Array.isArray(leads) || leads.length === 0) {
+    throw new Error('Cannot export: leads array must be non-empty.');
+  }
+  if (!spreadsheetId || typeof spreadsheetId !== 'string' || spreadsheetId.length < 10) {
+    throw new Error('Valid spreadsheetId is required for Google Sheets export.');
+  }
+
+  const sheetName = options.sheetName || 'Leads';
+  const keyPath = options.serviceAccountKeyPath || SERVICE_ACCOUNT_PATH;
+
+  try {
+    await fs.access(keyPath);
+  } catch {
+    throw new Error(
+      `Service account JSON key not found at ${keyPath}.\n` +
+        `Please place your service-account.json (downloaded from Google Cloud Console) ` +
+        `in ~/.leadmine/ or supply serviceAccountKeyPath. The client_email from the JSON ` +
+        `must be shared on the spreadsheet with Editor permissions.`
+    );
+  }
+
+  const auth = new google.auth.GoogleAuth({
+    keyFile: keyPath,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+
+  const sheets = google.sheets({ version: 'v4', auth });
+
+  const headerRow = [
+    'Name',
+    'Address',
+    'Phone',
+    'Email',
+    'Website',
+    'Rating',
+    'Review Count',
+    'Source',
+    'Category',
+    'Location',
+    'Scraped At',
+    'Email Verified',
+  ];
+
+  const dataRows = leads.map((lead) => [
+    lead.name,
+    lead.address || '',
+    lead.phone || '',
+    lead.email || '',
+    lead.website || '',
+    lead.rating?.toString() || '',
+    lead.reviewCount?.toString() || '',
+    lead.source,
+    lead.category || '',
+    lead.location || '',
+    lead.scrapedAt || '',
+    lead.emailVerified !== undefined ? String(lead.emailVerified) : '',
+  ]);
+
+  try {
+    // Create sheet if it does not exist (ignore error if it already does)
+    await sheets.spreadsheets
+      .batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: sheetName,
+                },
+              },
+            },
+          ],
+        },
+      })
+      .catch(() => {});
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      resource: {
+        values: [headerRow, ...dataRows],
+      },
+    });
+
+    console.log(`✅ Exported ${leads.length} leads to Google Sheet "${sheetName}" (spreadsheet ${spreadsheetId})`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Google Sheets export failed: ${message}. ` +
+        `Verify the service account has Editor access on the spreadsheet.`
+    );
+  }
 }
