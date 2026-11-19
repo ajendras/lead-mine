@@ -1,4 +1,4 @@
-import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, inferFormatFromPath, type GoogleSheetsOptions } from './types.js';
+import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, inferFormatFromPath } from './types.js';
 import { scrapeGoogleMaps } from './scrapers/maps.js';
 import { scrapeGoogleSearch } from './scrapers/search.js';
 import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';

@@ -205,7 +205,7 @@ export async function exportToSheets(
       spreadsheetId,
       range: `${sheetName}!A1`,
       valueInputOption: 'USER_ENTERED',
-      resource: {
+      requestBody: {
         values: [headerRow, ...dataRows],
       },
     });
