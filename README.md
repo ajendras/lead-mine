@@ -81,9 +81,16 @@ Built-in rate limiting, random delays, user-agent rotation and stealth to reduce
 Category, location, rating, review count and keyword filters for high-quality leads
 </td>
 <td>
+🧠 <b>Local LLM Scoring</b><br>
+Uses Ollama to score leads on relevance to your category and budget signals (local only, no data leaves your machine)
+</td>
+</tr>
+<tr>
+<td>
 📊 <b>Google Sheets Export</b><br>
 Direct write to Google Sheets via service account (no OAuth, no extra fees)
 </td>
+<td></td>
 </tr>
 <tr>
 <td>
@@ -103,7 +110,7 @@ Guided first-time setup that creates ~/.leadmine/config.json and runs a sample s
 
 ## 📦 Installation
 
-**Requirements:** Node.js >= 18.0.0 (see `engines` in package.json).
+**Requirements:** Node.js >= 18.0.0 (see `engines` in package.json). Ollama must be installed separately for LLM scoring.
 
 ```bash
 npm install -g lead-mine
@@ -139,6 +146,8 @@ const leads = await scrapeYellowPages('plumbers', 'Portland, OR', {
   limit: 30,
   enrich: true,
   verifyEmails: true,
+  useLLMScoring: true,
+  ollamaModel: 'llama3.1',
   rpm: 12,
   proxy: 'http://user:pass@residential.provider:22222',
 });
@@ -169,6 +178,12 @@ Search-focused run with enrichment:
 
 ```bash
 lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich --verify-emails
+```
+
+LLM scoring (requires Ollama running locally with a model pulled):
+
+```bash
+lead-mine scrape --category="plumbers" --location="Portland, OR" --use-llm-scoring --ollama-model=llama3.1 --limit=15
 ```
 
 Yelp fallback when Maps coverage is thin:
@@ -208,7 +223,7 @@ lead-mine scrape --category="plumbers" --location="Portland, OR" \
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets } from 'lead-mine';
+import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -218,12 +233,15 @@ const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
   minRating: 4.0,
   enrich: true,
   verifyEmails: true,
+  useLLMScoring: true,
+  ollamaModel: 'llama3.1',
   proxy: ['http://proxy1:8080', 'http://proxy2:8080'],
 });
 
 await saveLeads(leads, 'coffee-leads.xlsx');
 // or
 // await exportToSheets(leads, 'your-spreadsheet-id-here', { sheetName: 'PortlandLeads' });
+console.log(`Captured ${leads.length} leads`);
 ```
 
 <details><summary>Advanced: custom rate-limit and headless control</summary>
@@ -240,9 +258,17 @@ const leads = await scrapeCrunchbase('AI companies', {
   rpm: 8,
   enrich: true,
   verifyEmails: true,
+  useLLMScoring: true,
 });
 ```
 </details>
+
+**Ollama Setup for LLM Scoring**
+
+1. Install Ollama from https://ollama.com
+2. Start the server: `ollama serve`
+3. Pull a model: `ollama pull llama3.1` (or `mistral`, `phi3`, `gemma2:9b`)
+4. Use `--use-llm-scoring` (or set `useLLMScoring: true` in config). Scoring is rate-limited and runs locally.
 
 ## 🔧 Configuration
 
@@ -262,6 +288,8 @@ Example `~/.leadmine/config.json`:
   "limit": 30,
   "enrich": true,
   "verifyEmails": true,
+  "useLLMScoring": true,
+  "ollamaModel": "llama3.1",
   "rpm": 12,
   "headless": true,
   "minRating": 4.0,
@@ -282,6 +310,8 @@ Example `~/.leadmine/config.json`:
 | limit       | 20            | Maximum number of leads to return (`ScrapeOptionsSchema`) |
 | enrich      | true          | Visit websites to discover emails and metadata |
 | verifyEmails| false         | Filter extracted emails against a local list of known disposable domains; sets `emailVerified` on Lead records |
+| useLLMScoring | false       | Enable local LLM scoring via Ollama for relevance (to target) and budget signals |
+| ollamaModel | llama3.1      | Ollama model name (must be pulled locally; llama3.1, mistral, phi3 supported) |
 | headless    | true          | Run browser without GUI (`--no-headless` to disable) |
 | rpm         | 20            | Requests per minute for rate limiting (`withRateLimit`) |
 | minRating   | —             | Filter leads by minimum rating (0–5) |
@@ -315,7 +345,7 @@ flowchart TD
     Index --> YellowPages[src/scrapers/yellowpages.ts<br>list extraction with stable classes]
     Index --> Crunchbase[src/scrapers/crunchbase.ts<br>profile scraping + website extraction]
     Maps & Search & Yelp & YellowPages & Crunchbase --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit]
-    Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction + disposable checker]
+    Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction + disposable checker + Ollama scoring]
     Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
     Dedup --> Export[exporter.ts<br>csv-writer / xlsx / JSON / Google Sheets API]
@@ -335,7 +365,7 @@ flowchart TD
 │   ├── cli.ts            # Commander.js command definition with all flags + interactive wizard
 │   ├── config.ts         # loadConfig(), saveConfig() + CONFIG_PATH/SERVICE_ACCOUNT_PATH for ~/.leadmine/
 │   ├── types.ts          # Lead interface, ScrapeOptions (incl. googleSheets), Zod schema, ExportFormat
-│   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:) + isDisposableEmail()
+│   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:) + isDisposableEmail() + scoreLeadWithOllama()
 │   ├── exporter.ts       # exportLeads() + new exportToSheets() using googleapis
 │   ├── scrapers/
 │   │   ├── maps.ts       # scrapeGoogleMaps() + extractFromSidePanel
@@ -359,7 +389,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, and the interactive wizard.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, and the interactive wizard.
 
 ## 📍 Roadmap
 
@@ -371,7 +401,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Email verification step using disposable checker or SMTP
 - [x] Interactive wizard mode for first-time users
 - [x] Google Sheets direct export via service account
-- [ ] Local LLM lead scoring with Ollama (relevance, budget signals)
+- [x] Local LLM lead scoring with Ollama (relevance, budget signals)
 - [ ] Parallel browser contexts with worker pool
 - [ ] HTML report generator with embedded map previews
 - [ ] Docker image with bundled Chromium for server use

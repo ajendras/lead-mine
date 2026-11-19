@@ -28,6 +28,7 @@ Examples:
   $ lead-mine scrape --category="lawyers" --location="New York, NY" --proxy="http://user-zone:pass@gate.smartproxy.com:7000"
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --verify-emails
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --sheets=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --use-llm-scoring --ollama-model=llama3.1
     `
   );
 
@@ -73,6 +74,8 @@ program
       'Google Sheets spreadsheet ID for direct export (requires ~/.leadmine/service-account.json with Editor access)'
     )
   )
+  .option('--use-llm-scoring', 'Score leads for relevance and budget signals using local Ollama LLM')
+  .option('--ollama-model <model>', 'Ollama model to use for scoring', 'llama3.1')
   .action(async (cmdOptions) => {
     try {
       const config = await leadMine.loadConfig();
@@ -91,6 +94,8 @@ program
         headless: cmdOptions.headless,
         enrich: cmdOptions.enrich !== false,
         proxy: cmdOptions.proxy,
+        useLLMScoring: cmdOptions.useLlmScoring,
+        ollamaModel: cmdOptions.ollamaModel,
       };
 
       if (cmdOptions.verifyEmails !== undefined) {
@@ -199,6 +204,9 @@ program
       const verifyAnswer = await question('Enable email verification? (Y/n):');
       const verifyEmails = !verifyAnswer.toLowerCase().startsWith('n');
 
+      const llmAnswer = await question('Enable local LLM scoring (Ollama)? Requires Ollama running (y/N):');
+      const useLLMScoring = llmAnswer.toLowerCase().startsWith('y');
+
       const limitAnswer = await question('Default number of leads? [25]:');
       let limit = parseInt(limitAnswer.trim(), 10);
       if (Number.isNaN(limit) || limit < 5) limit = 25;
@@ -211,6 +219,8 @@ program
         limit,
         enrich,
         verifyEmails,
+        useLLMScoring,
+        ollamaModel: 'llama3.1',
         headless: true,
         rpm: 15,
         minRating: 4.0,

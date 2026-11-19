@@ -2,6 +2,7 @@ import type { Browser, Page } from 'playwright';
 import { launchStealthBrowser, getRandomUserAgent } from './utils/browser.js';
 import { randomDelay } from './utils/throttle.js';
 import type { Lead } from './types.js';
+import ollama from 'ollama';
 
 const DISPOSABLE_DOMAINS = new Set<string>([
   '10minutemail.com',
@@ -209,4 +210,91 @@ async function extractEnrichedInfo(
 
     return result;
   });
+}
+
+/**
+ * Scores a lead for relevance to the target category and budget signals using
+ * a locally-running Ollama instance. The model must be pulled beforehand
+ * (e.g. `ollama pull llama3.1`). Returns the original lead on any error.
+ *
+ * Adds `relevanceScore`, `budgetScore` (both 0-10) and optional `scoringNotes`.
+ */
+export async function scoreLeadWithOllama(
+  lead: Lead,
+  targetCategory: string,
+  model: string = 'llama3.1'
+): Promise<Lead> {
+  if (!lead.name) {
+    return lead;
+  }
+
+  const systemPrompt =
+    'You are an expert B2B sales qualifier. Respond ONLY with valid JSON. No extra text or explanations.';
+
+  const userPrompt = `Evaluate this business for a sales campaign targeting "${targetCategory}".
+
+Name: ${lead.name}
+Address: ${lead.address || 'Unknown'}
+Website: ${lead.website || 'None'}
+Rating: ${lead.rating ? lead.rating + '/5 (' + (lead.reviewCount || 0) + ' reviews)' : 'N/A'}
+${lead.email ? 'Has email: yes' : 'Has email: no'}
+
+Score on two axes (1-10):
+- relevance: how well it matches the target category or is a good prospect for related services
+- budget: signals of financial capacity/readiness to buy (established, high reviews, professional presence = higher)
+
+Return valid JSON only:
+{
+  "relevance": <integer 1-10>,
+  "budget": <integer 1-10>,
+  "notes": "<short 1-sentence reasoning>"
+}`;
+
+  try {
+    const response = await ollama.chat({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      format: 'json',
+    });
+
+    const content = response.message?.content?.trim() || '';
+    let parsed: any;
+
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]!);
+      } else {
+        throw new Error('Could not parse JSON from Ollama response');
+      }
+    }
+
+    const relevance = typeof parsed.relevance === 'number' ? parsed.relevance : 5;
+    const budget = typeof parsed.budget === 'number' ? parsed.budget : 5;
+    const notes = typeof parsed.notes === 'string' ? parsed.notes : '';
+
+    return {
+      ...lead,
+      relevanceScore: Math.max(0, Math.min(10, Math.round(relevance))),
+      budgetScore: Math.max(0, Math.min(10, Math.round(budget))),
+      scoringNotes: notes.length > 3 ? notes.substring(0, 140) : undefined,
+      scrapedAt: new Date().toISOString(),
+    };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes('connect') || message.includes('ECONNREFUSED')) {
+      console.warn(
+        `⚠️  Could not connect to Ollama at http://localhost:11434. Make sure Ollama is running (` +
+          `ollama serve) and the model "${model}" is pulled. LLM scoring skipped.`
+      );
+    } else {
+      console.warn(`⚠️  LLM scoring failed for "${lead.name}": ${message}. Continuing without score.`);
+    }
+    return lead;
+  }
 }
