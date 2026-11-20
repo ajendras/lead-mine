@@ -75,6 +75,10 @@ async function exportToCsv(leads: Lead[], filepath: string): Promise<void> {
       { id: 'category', title: 'Category' },
       { id: 'location', title: 'Location' },
       { id: 'scrapedAt', title: 'Scraped At' },
+      { id: 'emailVerified', title: 'Email Verified' },
+      { id: 'relevanceScore', title: 'Relevance Score' },
+      { id: 'budgetScore', title: 'Budget Score' },
+      { id: 'scoringNotes', title: 'Scoring Notes' },
     ],
     alwaysQuote: true,
     encoding: 'utf8',
@@ -101,6 +105,10 @@ async function exportToXlsx(leads: Lead[], filepath: string): Promise<void> {
     Category: lead.category ?? '',
     Location: lead.location ?? '',
     'Scraped At': lead.scrapedAt,
+    'Email Verified': lead.emailVerified !== undefined ? String(lead.emailVerified) : '',
+    'Relevance Score': lead.relevanceScore ?? '',
+    'Budget Score': lead.budgetScore ?? '',
+    'Scoring Notes': lead.scoringNotes ?? '',
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
@@ -165,6 +173,9 @@ export async function exportToSheets(
     'Location',
     'Scraped At',
     'Email Verified',
+    'Relevance Score',
+    'Budget Score',
+    'Scoring Notes',
   ];
 
   const dataRows = leads.map((lead) => [
@@ -180,6 +191,9 @@ export async function exportToSheets(
     lead.location || '',
     lead.scrapedAt || '',
     lead.emailVerified !== undefined ? String(lead.emailVerified) : '',
+    lead.relevanceScore !== undefined ? lead.relevanceScore.toString() : '',
+    lead.budgetScore !== undefined ? lead.budgetScore.toString() : '',
+    lead.scoringNotes || '',
   ]);
 
   try {
