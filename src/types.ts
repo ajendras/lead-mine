@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-export type ScrapeSource = 'maps' | 'search' | 'yelp' | 'yellowpages' | 'crunchbase';
-
 export interface Lead {
   name: string;
   address?: string;
@@ -14,11 +12,15 @@ export interface Lead {
   category?: string;
   location?: string;
   scrapedAt?: string;
-  emailVerified?: boolean;
   relevanceScore?: number;
   budgetScore?: number;
   scoringNotes?: string;
+  emailVerified?: boolean;
 }
+
+export type ScrapeSource = 'maps' | 'search' | 'yelp' | 'yellowpages' | 'crunchbase';
+
+export type ExportFormat = 'csv' | 'json' | 'xlsx';
 
 export interface GoogleSheetsOptions {
   spreadsheetId?: string;
@@ -34,53 +36,43 @@ export interface ScrapeOptions {
   limit?: number;
   enrich?: boolean;
   verifyEmails?: boolean;
-  headless?: boolean;
+  useLLMScoring?: boolean;
+  ollamaModel?: string;
   rpm?: number;
+  headless?: boolean;
   minRating?: number;
   userAgent?: string;
   proxy?: string | string[];
-  googleSheets?: GoogleSheetsOptions;
-  useLLMScoring?: boolean;
-  ollamaModel?: string;
+  googleSheets?: Partial<GoogleSheetsOptions>;
+  concurrency?: number;
+  [key: string]: any;
 }
 
 export const ScrapeOptionsSchema = z
   .object({
-    source: z
-      .enum(['maps', 'search', 'yelp', 'yellowpages', 'crunchbase'])
-      .default('maps' as ScrapeSource),
+    source: z.enum(['maps', 'search', 'yelp', 'yellowpages', 'crunchbase']).default('maps'),
     category: z.string().optional(),
     location: z.string().optional(),
-    limit: z.preprocess(
-      (val) => (typeof val === 'string' ? parseInt(val, 10) : val),
-      z.number().int().min(1).max(200).default(20)
-    ),
+    limit: z.number().min(1).max(500).default(25),
     enrich: z.boolean().default(true),
     verifyEmails: z.boolean().default(false),
+    useLLMScoring: z.boolean().default(false),
+    ollamaModel: z.string().default('llama3.1'),
+    rpm: z.number().min(1).max(60).default(20),
     headless: z.boolean().default(true),
-    rpm: z.preprocess(
-      (val) => (typeof val === 'string' ? parseInt(val, 10) : val),
-      z.number().int().min(5).max(60).default(20)
-    ),
-    minRating: z.preprocess(
-      (val) => (typeof val === 'string' ? parseFloat(val as string) : val),
-      z.number().min(0).max(5).optional()
-    ),
+    minRating: z.number().min(0).max(5).optional(),
     userAgent: z.string().optional(),
     proxy: z.union([z.string(), z.array(z.string())]).optional(),
     googleSheets: z
       .object({
-        spreadsheetId: z.string().optional(),
+        spreadsheetId: z.string(),
         sheetName: z.string().default('Leads'),
         serviceAccountKeyPath: z.string().optional(),
       })
       .optional(),
-    useLLMScoring: z.boolean().default(false),
-    ollamaModel: z.string().default('llama3.1'),
+    concurrency: z.number().int().min(1).max(6).default(3),
   })
   .passthrough();
-
-export type ExportFormat = 'csv' | 'json' | 'xlsx';
 
 export function inferFormatFromPath(filepath: string): ExportFormat {
   const ext = filepath.toLowerCase().split('.').pop();

@@ -29,6 +29,7 @@ Examples:
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --verify-emails
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --sheets=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --use-llm-scoring --ollama-model=llama3.1
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --concurrency=4
     `
   );
 
@@ -76,6 +77,11 @@ program
   )
   .option('--use-llm-scoring', 'Score leads for relevance and budget signals using local Ollama LLM')
   .option('--ollama-model <model>', 'Ollama model to use for scoring', 'llama3.1')
+  .addOption(
+    new Option('--concurrency <number>', 'Max parallel browser contexts (1-6)')
+      .argParser((val) => parseInt(val, 10))
+      .default(3)
+  )
   .action(async (cmdOptions) => {
     try {
       const config = await leadMine.loadConfig();
@@ -83,6 +89,11 @@ program
       const limit = parseInt(cmdOptions.limit, 10);
       if (Number.isNaN(limit) || limit < 1) {
         program.error('Limit must be a positive integer.');
+      }
+
+      const concurrency = cmdOptions.concurrency;
+      if (Number.isNaN(concurrency) || concurrency < 1 || concurrency > 6) {
+        program.error('Concurrency must be an integer between 1 and 6.');
       }
 
       const source = cmdOptions.source as ScrapeSource;
@@ -96,6 +107,7 @@ program
         proxy: cmdOptions.proxy,
         useLLMScoring: cmdOptions.useLlmScoring,
         ollamaModel: cmdOptions.ollamaModel,
+        concurrency,
       };
 
       if (cmdOptions.verifyEmails !== undefined) {
@@ -224,6 +236,7 @@ program
         headless: true,
         rpm: 15,
         minRating: 4.0,
+        concurrency: 3,
       };
 
       await leadMine.saveConfig(config);

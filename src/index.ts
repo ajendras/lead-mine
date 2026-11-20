@@ -4,7 +4,7 @@ import { scrapeGoogleSearch } from './scrapers/search.js';
 import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
 import { scrapeYellowPages as scrapeYellowPagesInternal } from './scrapers/yellowpages.js';
 import { scrapeCrunchbase as scrapeCrunchbaseInternal } from './scrapers/crunchbase.js';
-import { enrichLead } from './enricher.js';
+import { enrichLead, scoreLeadWithOllama } from './enricher.js';
 import { exportLeads, exportToSheets } from './exporter.js';
 import { withRateLimit, randomDelay } from './utils/throttle.js';
 import { setProxies } from './utils/browser.js';
@@ -36,12 +36,45 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
 }
 
 /**
+ * Processes an array of items with limited concurrency using a worker pool pattern.
+ * Used to enable parallel browser contexts while respecting rate limits.
+ */
+async function processWithConcurrency<T, R>(
+  items: T[],
+  processor: (item: T) => Promise<R>,
+  concurrency: number
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const worker = async (): Promise<void> => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      const item = items[index]!;
+      try {
+        results[index] = await processor(item);
+      } catch (error) {
+        console.warn(`Worker error processing item ${index}:`, error);
+        results[index] = item as unknown as R;
+      }
+    }
+  };
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length || 1) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+/**
  * Scrape targeted business leads from Google Maps.
  *
  * @param category - Business category or search term (e.g. "plumbers", "roof repair")
  * @param location - Geographic target (e.g. "Portland, OR", "Austin, TX")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
+ *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  * @throws {Error} When category or location are missing or invalid
  */
@@ -84,30 +117,31 @@ export async function scrapeMaps(
     leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
   }
 
-  // Enrichment with polite rate limiting
+  // Enrichment with parallel browser contexts via worker pool
   if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads (this may take a moment)...`);
+    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
     const throttledEnrich = withRateLimit(
       (lead: Lead) => enrichLead(lead, validated.verifyEmails),
       validated.rpm
     );
-    const enriched: Lead[] = [];
+    leads = await processWithConcurrency(
+      leads,
+      throttledEnrich,
+      validated.concurrency
+    );
+  }
 
-    for (const lead of leads) {
-      try {
-        const result = await throttledEnrich(lead);
-        enriched.push(result);
-        // Additional breathing room between site visits
-        if (enriched.length < leads.length) {
-          await randomDelay(900, 2200);
-        }
-      } catch (err) {
-        // Continue with original lead if enrichment fails
-        console.warn(`Enrichment failed for ${lead.name}, continuing...`);
-        enriched.push(lead);
-      }
-    }
-    leads = enriched;
+  if (validated.useLLMScoring && leads.length > 0) {
+    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
+    const throttledScore = withRateLimit(
+      (lead: Lead) => scoreLeadWithOllama(lead, category, validated.ollamaModel),
+      10
+    );
+    leads = await processWithConcurrency(
+      leads,
+      throttledScore,
+      Math.min(validated.concurrency, 2)
+    );
   }
 
   const unique = deduplicateLeads(leads);
@@ -121,7 +155,7 @@ export async function scrapeMaps(
  *
  * @param query - Full search query (e.g. "plumbers Portland OR contact")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
+ *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeSearch(
@@ -151,23 +185,29 @@ export async function scrapeSearch(
   }
 
   if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads...`);
+    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
     const throttledEnrich = withRateLimit(
       (lead: Lead) => enrichLead(lead, validated.verifyEmails),
       Math.min(validated.rpm, 15)
     );
-    const enriched: Lead[] = [];
+    leads = await processWithConcurrency(
+      leads,
+      throttledEnrich,
+      validated.concurrency
+    );
+  }
 
-    for (const lead of leads) {
-      try {
-        const result = await throttledEnrich(lead);
-        enriched.push(result);
-        await randomDelay(700, 1600);
-      } catch {
-        enriched.push(lead);
-      }
-    }
-    leads = enriched;
+  if (validated.useLLMScoring && leads.length > 0) {
+    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
+    const throttledScore = withRateLimit(
+      (lead: Lead) => scoreLeadWithOllama(lead, query, validated.ollamaModel),
+      10
+    );
+    leads = await processWithConcurrency(
+      leads,
+      throttledScore,
+      Math.min(validated.concurrency, 2)
+    );
   }
 
   const unique = deduplicateLeads(leads);
@@ -182,7 +222,7 @@ export async function scrapeSearch(
  * @param category - Business category (e.g. "plumbers")
  * @param location - City or neighborhood
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
+ *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYelp(
@@ -219,21 +259,29 @@ export async function scrapeYelp(
   }
 
   if (validated.enrich && leads.length > 0) {
+    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
     const throttledEnrich = withRateLimit(
       (lead: Lead) => enrichLead(lead, validated.verifyEmails),
       validated.rpm
     );
-    const enriched: Lead[] = [];
+    leads = await processWithConcurrency(
+      leads,
+      throttledEnrich,
+      validated.concurrency
+    );
+  }
 
-    for (const lead of leads) {
-      try {
-        const result = await throttledEnrich(lead);
-        enriched.push(result);
-      } catch {
-        enriched.push(lead);
-      }
-    }
-    leads = enriched;
+  if (validated.useLLMScoring && leads.length > 0) {
+    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
+    const throttledScore = withRateLimit(
+      (lead: Lead) => scoreLeadWithOllama(lead, category, validated.ollamaModel),
+      10
+    );
+    leads = await processWithConcurrency(
+      leads,
+      throttledScore,
+      Math.min(validated.concurrency, 2)
+    );
   }
 
   const unique = deduplicateLeads(leads);
@@ -248,7 +296,7 @@ export async function scrapeYelp(
  * @param category - Business category (e.g. "plumbers")
  * @param location - City and state
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
+ *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeYellowPages(
@@ -285,25 +333,29 @@ export async function scrapeYellowPages(
   }
 
   if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads...`);
+    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
     const throttledEnrich = withRateLimit(
       (lead: Lead) => enrichLead(lead, validated.verifyEmails),
       validated.rpm
     );
-    const enriched: Lead[] = [];
+    leads = await processWithConcurrency(
+      leads,
+      throttledEnrich,
+      validated.concurrency
+    );
+  }
 
-    for (const lead of leads) {
-      try {
-        const result = await throttledEnrich(lead);
-        enriched.push(result);
-        if (enriched.length < leads.length) {
-          await randomDelay(1100, 2300);
-        }
-      } catch {
-        enriched.push(lead);
-      }
-    }
-    leads = enriched;
+  if (validated.useLLMScoring && leads.length > 0) {
+    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
+    const throttledScore = withRateLimit(
+      (lead: Lead) => scoreLeadWithOllama(lead, category, validated.ollamaModel),
+      10
+    );
+    leads = await processWithConcurrency(
+      leads,
+      throttledScore,
+      Math.min(validated.concurrency, 2)
+    );
   }
 
   const unique = deduplicateLeads(leads);
@@ -317,7 +369,7 @@ export async function scrapeYellowPages(
  *
  * @param query - Search query (e.g. "fintech" or "AI companies Portland")
  * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `verifyEmails`, `googleSheets` and all other ScrapeOptions.
+ *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
  * @returns Array of enriched, deduplicated Lead records
  */
 export async function scrapeCrunchbase(
@@ -347,23 +399,29 @@ export async function scrapeCrunchbase(
   }
 
   if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads...`);
+    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
     const throttledEnrich = withRateLimit(
       (lead: Lead) => enrichLead(lead, validated.verifyEmails),
       Math.min(validated.rpm, 10)
     );
-    const enriched: Lead[] = [];
+    leads = await processWithConcurrency(
+      leads,
+      throttledEnrich,
+      validated.concurrency
+    );
+  }
 
-    for (const lead of leads) {
-      try {
-        const result = await throttledEnrich(lead);
-        enriched.push(result);
-        await randomDelay(1400, 2800);
-      } catch {
-        enriched.push(lead);
-      }
-    }
-    leads = enriched;
+  if (validated.useLLMScoring && leads.length > 0) {
+    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
+    const throttledScore = withRateLimit(
+      (lead: Lead) => scoreLeadWithOllama(lead, query, validated.ollamaModel),
+      10
+    );
+    leads = await processWithConcurrency(
+      leads,
+      throttledScore,
+      Math.min(validated.concurrency, 2)
+    );
   }
 
   const unique = deduplicateLeads(leads);
@@ -409,3 +467,4 @@ export { loadConfig, saveConfig, CONFIG_PATH, SERVICE_ACCOUNT_PATH } from './con
 export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions, GoogleSheetsOptions } from './types.js';
 export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
 export { isDisposableEmail } from './enricher.js';
+export { getWorkerPool, closeWorkerPool, BrowserWorkerPool } from './utils/browser.js';

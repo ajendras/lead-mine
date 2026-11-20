@@ -402,7 +402,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Interactive wizard mode for first-time users
 - [x] Google Sheets direct export via service account
 - [x] Local LLM lead scoring with Ollama (relevance, budget signals)
-- [ ] Parallel browser contexts with worker pool
+- [x] Parallel browser contexts with worker pool
 - [ ] HTML report generator with embedded map previews
 - [ ] Docker image with bundled Chromium for server use
 - [ ] CRM import templates (HubSpot CSV, Salesforce)

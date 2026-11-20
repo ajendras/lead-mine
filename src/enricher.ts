@@ -1,5 +1,5 @@
-import type { Browser, Page } from 'playwright';
-import { launchStealthBrowser, getRandomUserAgent } from './utils/browser.js';
+import type { Page } from 'playwright';
+import { getWorkerPool } from './utils/browser.js';
 import { randomDelay } from './utils/throttle.js';
 import type { Lead } from './types.js';
 import ollama from 'ollama';
@@ -60,46 +60,34 @@ export function isDisposableEmail(email: string): boolean {
  * additional contact data — primarily email addresses via mailto: links, regex
  * patterns on page text/HTML, and common business email conventions.
  *
- * Falls back gracefully on any navigation, timeout or parsing error, returning
- * the original lead unchanged. Uses a fresh stealth browser context per lead
- * to minimize fingerprinting and blocks.
+ * Uses the shared BrowserWorkerPool for parallel browser contexts. Falls back
+ * gracefully on any navigation, timeout or parsing error, returning the original
+ * lead unchanged.
  *
  * If verifyEmails is enabled, disposable/temporary emails are discarded and
  * emailVerified is set on the returned Lead.
- *
- * @param lead - Lead record (must contain a valid website to perform enrichment)
- * @param verifyEmails - Whether to filter out disposable email addresses
- * @returns Promise resolving to an enriched Lead (email, phone, address, emailVerified may be added)
  */
 export async function enrichLead(lead: Lead, verifyEmails: boolean = false): Promise<Lead> {
   if (!lead.website || !lead.website.startsWith('http')) {
     return { ...lead, emailVerified: lead.emailVerified ?? (lead.email ? !isDisposableEmail(lead.email) : undefined) };
   }
 
-  let browser: Browser | null = null;
-  let page: Page | null = null;
+  let extra: { email?: string; phone?: string; address?: string } = {};
 
   try {
-    browser = await launchStealthBrowser();
-    const context = await browser.newContext({
-      userAgent: getRandomUserAgent(),
-      viewport: { width: 1366, height: 920 },
-      locale: 'en-US',
-      timezoneId: 'America/Los_Angeles',
+    const pool = getWorkerPool();
+    extra = await pool.run(async (page: Page) => {
+      console.log(`🌐 Enriching "${lead.name}" via ${new URL(lead.website!).hostname}...`);
+
+      await page.goto(lead.website!, {
+        waitUntil: 'domcontentloaded',
+        timeout: 15000,
+      });
+
+      await randomDelay(1350, 2650);
+
+      return await extractEnrichedInfo(page);
     });
-
-    page = await context.newPage();
-
-    console.log(`🌐 Enriching "${lead.name}" via ${new URL(lead.website).hostname}...`);
-
-    await page.goto(lead.website, {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000,
-    });
-
-    await randomDelay(1350, 2650);
-
-    const extra = await extractEnrichedInfo(page);
 
     let email = extra.email || lead.email;
     let emailVerified: boolean | undefined = undefined;
@@ -127,9 +115,6 @@ export async function enrichLead(lead: Lead, verifyEmails: boolean = false): Pro
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`⚠️  Enrichment failed for "${lead.name}": ${message}. Returning original data.`);
     return { ...lead };
-  } finally {
-    if (page) await page.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
   }
 }
 
