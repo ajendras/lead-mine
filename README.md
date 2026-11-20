@@ -223,7 +223,7 @@ lead-mine scrape --category="plumbers" --location="Portland, OR" \
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama } from 'lead-mine';
+import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama, withRateLimit, randomDelay } from 'lead-mine';
 
 const config = await loadConfig();
 

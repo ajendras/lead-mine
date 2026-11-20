@@ -6,7 +6,7 @@ import { scrapeYellowPages as scrapeYellowPagesInternal } from './scrapers/yello
 import { scrapeCrunchbase as scrapeCrunchbaseInternal } from './scrapers/crunchbase.js';
 import { enrichLead, scoreLeadWithOllama } from './enricher.js';
 import { exportLeads, exportToSheets } from './exporter.js';
-import { withRateLimit, randomDelay } from './utils/throttle.js';
+import { withRateLimit } from './utils/throttle.js';
 import { setProxies } from './utils/browser.js';
 
 /**
@@ -467,4 +467,5 @@ export { loadConfig, saveConfig, CONFIG_PATH, SERVICE_ACCOUNT_PATH } from './con
 export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions, GoogleSheetsOptions } from './types.js';
 export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
 export { isDisposableEmail } from './enricher.js';
+export { withRateLimit, randomDelay } from './utils/throttle.js';
 export { getWorkerPool, closeWorkerPool, BrowserWorkerPool } from './utils/browser.js';
