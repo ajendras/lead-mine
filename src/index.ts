@@ -1,13 +1,14 @@
-import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, inferFormatFromPath } from './types.js';
+import { type Lead, type ScrapeOptions, ScrapeOptionsSchema, type ExportFormat, type ScrapeSource, inferFormatFromPath } from './types.js';
 import { scrapeGoogleMaps } from './scrapers/maps.js';
 import { scrapeGoogleSearch } from './scrapers/search.js';
 import { scrapeYelp as scrapeYelpInternal } from './scrapers/yelp.js';
 import { scrapeYellowPages as scrapeYellowPagesInternal } from './scrapers/yellowpages.js';
 import { scrapeCrunchbase as scrapeCrunchbaseInternal } from './scrapers/crunchbase.js';
-import { enrichLead, scoreLeadWithOllama } from './enricher.js';
+import { enrichLead, isDisposableEmail, scoreLeadWithOllama } from './enricher.js';
 import { exportLeads, exportToSheets } from './exporter.js';
-import { withRateLimit } from './utils/throttle.js';
+import { withRateLimit, randomDelay } from './utils/throttle.js';
 import { setProxies } from './utils/browser.js';
+import { loadConfig, saveConfig, CONFIG_PATH } from './config.js';
 
 /**
  * Removes duplicate leads based on a normalized key composed of name + address or website.
@@ -19,7 +20,7 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
 
   for (const lead of leads) {
     const key = [
-      lead.name.toLowerCase().trim(),
+      (lead.name || '').toLowerCase().trim(),
       (lead.address || '').toLowerCase().trim(),
       (lead.website || '').toLowerCase().trim(),
     ]
@@ -36,458 +37,169 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
 }
 
 /**
- * Processes an array of items with limited concurrency using a worker pool pattern.
- * Used to enable parallel browser contexts while respecting rate limits.
+ * Processes an array of items with limited concurrency.
+ * Wraps the processor with rate limiting and executes in batches.
+ * This is the internal utility tested by scrapers.test.ts.
  */
-async function processWithConcurrency<T, R>(
+export async function processWithConcurrency<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
-  concurrency: number
+  limit: number = 3
 ): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
+  if (items.length === 0) return [];
 
-  const worker = async (): Promise<void> => {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      const item = items[index]!;
-      try {
-        results[index] = await processor(item);
-      } catch (error) {
-        console.warn(`Worker error processing item ${index}:`, error);
-        results[index] = item as unknown as R;
-      }
+  const results: R[] = [];
+  const rateLimitedProcessor = withRateLimit(processor);
+
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    const batchPromises = batch.map((item) => rateLimitedProcessor(item));
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+    if (i + limit < items.length) {
+      await randomDelay(400, 900);
     }
-  };
+  }
 
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length || 1) },
-    () => worker()
-  );
-  await Promise.all(workers);
   return results;
 }
 
 /**
- * Scrape targeted business leads from Google Maps.
- *
- * @param category - Business category or search term (e.g. "plumbers", "roof repair")
- * @param location - Geographic target (e.g. "Portland, OR", "Austin, TX")
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
- * @returns Array of enriched, deduplicated Lead records
- * @throws {Error} When category or location are missing or invalid
+ * Applies deduplication, enrichment, LLM scoring and final limit.
+ * Uses processWithConcurrency for parallel execution where enabled.
  */
+async function postProcessLeads(leads: Lead[], options: ScrapeOptions): Promise<Lead[]> {
+  let processed = deduplicateLeads(leads);
+
+  if (options.enrich !== false && processed.length > 0) {
+    const enriched = await processWithConcurrency(
+      processed,
+      (lead) => enrichLead(lead, options.verifyEmails ?? false),
+      options.concurrency ?? 3
+    );
+    processed = enriched;
+  }
+
+  if (options.useLLMScoring && processed.length > 0) {
+    const scored = await processWithConcurrency(
+      processed,
+      (lead) => scoreLeadWithOllama(lead, options.category || options.query || 'business', options.ollamaModel),
+      2
+    );
+    processed = scored;
+  }
+
+  return processed.slice(0, options.limit ?? 20);
+}
+
+// Public scraper API wrappers (apply config, proxies, post-processing, deduplication)
 export async function scrapeMaps(
   category: string,
   location: string,
-  options: ScrapeOptions = {}
+  options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const validated = ScrapeOptionsSchema.parse(options);
-  setProxies(validated.proxy);
-
-  if (!category?.trim()) {
-    throw new Error(
-      'Category is required. Provide a business type such as "plumbers", "coffee shops" or "dentists".'
-    );
-  }
-  if (!location?.trim()) {
-    throw new Error(
-      'Location is required. Provide a city and state, e.g. "Portland, OR" or "London, UK".'
-    );
-  }
-
-  console.log(
-    `🔎 Scraping Google Maps for "${category}" near "${location}" (limit: ${validated.limit})`
-  );
-
-  let leads = await scrapeGoogleMaps(category.trim(), location.trim(), validated.limit);
-
-  // Normalize and attach metadata
-  leads = leads.map((lead) => ({
-    ...lead,
-    category: category.trim(),
-    location: location.trim(),
-    scrapedAt: new Date().toISOString(),
+  const opts = ScrapeOptionsSchema.parse({
     source: 'maps' as const,
-  })) as Lead[];
+    category,
+    location,
+    ...options,
+  });
 
-  // Rating filter
-  if (validated.minRating !== undefined) {
-    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
-  }
+  await setProxies(opts.proxy);
 
-  // Enrichment with parallel browser contexts via worker pool
-  if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
-    const throttledEnrich = withRateLimit(
-      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
-      validated.rpm
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledEnrich,
-      validated.concurrency
-    );
-  }
-
-  if (validated.useLLMScoring && leads.length > 0) {
-    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
-    const throttledScore = withRateLimit(
-      (lead: Lead) => scoreLeadWithOllama(lead, category, validated.ollamaModel),
-      10
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledScore,
-      Math.min(validated.concurrency, 2)
-    );
-  }
-
-  const unique = deduplicateLeads(leads);
-  console.log(`✅ Retrieved ${unique.length} unique leads from Google Maps.`);
-
-  return unique;
+  let leads = await scrapeGoogleMaps(category, location, opts);
+  leads = await postProcessLeads(leads, opts);
+  return leads;
 }
 
-/**
- * Scrape leads via Google organic search results and linked contact pages.
- *
- * @param query - Full search query (e.g. "plumbers Portland OR contact")
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
- * @returns Array of enriched, deduplicated Lead records
- */
 export async function scrapeSearch(
   query: string,
-  options: ScrapeOptions = {}
+  options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const validated = ScrapeOptionsSchema.parse(options);
-  setProxies(validated.proxy);
-
-  if (!query?.trim()) {
-    throw new Error('Search query is required.');
-  }
-
-  console.log(`🔎 Performing Google search for "${query}" (limit: ${validated.limit})`);
-
-  let leads = await scrapeGoogleSearch(query.trim(), validated.limit);
-
-  leads = leads.map((lead) => ({
-    ...lead,
-    category: query.trim(),
-    scrapedAt: new Date().toISOString(),
+  const opts = ScrapeOptionsSchema.parse({
     source: 'search' as const,
-  })) as Lead[];
+    query,
+    ...options,
+  });
 
-  if (validated.minRating !== undefined) {
-    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
-  }
+  await setProxies(opts.proxy);
 
-  if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
-    const throttledEnrich = withRateLimit(
-      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
-      Math.min(validated.rpm, 15)
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledEnrich,
-      validated.concurrency
-    );
-  }
-
-  if (validated.useLLMScoring && leads.length > 0) {
-    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
-    const throttledScore = withRateLimit(
-      (lead: Lead) => scoreLeadWithOllama(lead, query, validated.ollamaModel),
-      10
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledScore,
-      Math.min(validated.concurrency, 2)
-    );
-  }
-
-  const unique = deduplicateLeads(leads);
-  console.log(`✅ Retrieved ${unique.length} unique leads from Google Search.`);
-
-  return unique;
+  let leads = await scrapeGoogleSearch(query, opts);
+  leads = await postProcessLeads(leads, opts);
+  return leads;
 }
 
-/**
- * Scrape leads from Yelp business listings.
- *
- * @param category - Business category (e.g. "plumbers")
- * @param location - City or neighborhood
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
- * @returns Array of enriched, deduplicated Lead records
- */
 export async function scrapeYelp(
   category: string,
   location: string,
-  options: ScrapeOptions = {}
+  options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const validated = ScrapeOptionsSchema.parse(options);
-  setProxies(validated.proxy);
-
-  if (!category?.trim()) {
-    throw new Error('Category is required for Yelp scraping.');
-  }
-  if (!location?.trim()) {
-    throw new Error('Location is required for Yelp scraping.');
-  }
-
-  console.log(
-    `🔎 Scraping Yelp for "${category}" in "${location}" (limit: ${validated.limit})`
-  );
-
-  let leads = await scrapeYelpInternal(category.trim(), location.trim(), validated.limit);
-
-  leads = leads.map((lead) => ({
-    ...lead,
-    category: category.trim(),
-    location: location.trim(),
-    scrapedAt: new Date().toISOString(),
+  const opts = ScrapeOptionsSchema.parse({
     source: 'yelp' as const,
-  })) as Lead[];
+    category,
+    location,
+    ...options,
+  });
 
-  if (validated.minRating !== undefined) {
-    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
-  }
+  await setProxies(opts.proxy);
 
-  if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
-    const throttledEnrich = withRateLimit(
-      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
-      validated.rpm
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledEnrich,
-      validated.concurrency
-    );
-  }
-
-  if (validated.useLLMScoring && leads.length > 0) {
-    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
-    const throttledScore = withRateLimit(
-      (lead: Lead) => scoreLeadWithOllama(lead, category, validated.ollamaModel),
-      10
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledScore,
-      Math.min(validated.concurrency, 2)
-    );
-  }
-
-  const unique = deduplicateLeads(leads);
-  console.log(`✅ Retrieved ${unique.length} unique leads from Yelp.`);
-
-  return unique;
+  let leads = await scrapeYelpInternal(category, location, opts);
+  leads = await postProcessLeads(leads, opts);
+  return leads;
 }
 
-/**
- * Scrape leads from YellowPages directory.
- *
- * @param category - Business category (e.g. "plumbers")
- * @param location - City and state
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
- * @returns Array of enriched, deduplicated Lead records
- */
 export async function scrapeYellowPages(
   category: string,
   location: string,
-  options: ScrapeOptions = {}
+  options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const validated = ScrapeOptionsSchema.parse(options);
-  setProxies(validated.proxy);
-
-  if (!category?.trim()) {
-    throw new Error('Category is required for YellowPages scraping.');
-  }
-  if (!location?.trim()) {
-    throw new Error('Location is required for YellowPages scraping.');
-  }
-
-  console.log(
-    `🔎 Scraping YellowPages for "${category}" in "${location}" (limit: ${validated.limit})`
-  );
-
-  let leads = await scrapeYellowPagesInternal(category.trim(), location.trim(), validated.limit);
-
-  leads = leads.map((lead) => ({
-    ...lead,
-    category: category.trim(),
-    location: location.trim(),
-    scrapedAt: new Date().toISOString(),
+  const opts = ScrapeOptionsSchema.parse({
     source: 'yellowpages' as const,
-  })) as Lead[];
+    category,
+    location,
+    ...options,
+  });
 
-  if (validated.minRating !== undefined) {
-    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
-  }
+  await setProxies(opts.proxy);
 
-  if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
-    const throttledEnrich = withRateLimit(
-      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
-      validated.rpm
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledEnrich,
-      validated.concurrency
-    );
-  }
-
-  if (validated.useLLMScoring && leads.length > 0) {
-    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
-    const throttledScore = withRateLimit(
-      (lead: Lead) => scoreLeadWithOllama(lead, category, validated.ollamaModel),
-      10
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledScore,
-      Math.min(validated.concurrency, 2)
-    );
-  }
-
-  const unique = deduplicateLeads(leads);
-  console.log(`✅ Retrieved ${unique.length} unique leads from YellowPages.`);
-
-  return unique;
+  let leads = await scrapeYellowPagesInternal(category, location, opts);
+  leads = await postProcessLeads(leads, opts);
+  return leads;
 }
 
-/**
- * Scrape startup/company leads from Crunchbase.
- *
- * @param query - Search query (e.g. "fintech" or "AI companies Portland")
- * @param options - Scrape configuration (merged with values from ~/.leadmine/config.json).
- *                  Supports `proxy`, `concurrency`, `verifyEmails`, `useLLMScoring` and all other ScrapeOptions.
- * @returns Array of enriched, deduplicated Lead records
- */
 export async function scrapeCrunchbase(
   query: string,
-  options: ScrapeOptions = {}
+  options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const validated = ScrapeOptionsSchema.parse(options);
-  setProxies(validated.proxy);
-
-  if (!query?.trim()) {
-    throw new Error('Query is required for Crunchbase scraping.');
-  }
-
-  console.log(`🔎 Scraping Crunchbase for "${query}" (limit: ${validated.limit})`);
-
-  let leads = await scrapeCrunchbaseInternal(query.trim(), validated.limit);
-
-  leads = leads.map((lead) => ({
-    ...lead,
-    category: query.trim(),
-    scrapedAt: new Date().toISOString(),
+  const opts = ScrapeOptionsSchema.parse({
     source: 'crunchbase' as const,
-  })) as Lead[];
+    query,
+    ...options,
+  });
 
-  if (validated.minRating !== undefined) {
-    leads = leads.filter((lead) => (lead.rating ?? 0) >= validated.minRating!);
-  }
+  await setProxies(opts.proxy);
 
-  if (validated.enrich && leads.length > 0) {
-    console.log(`Enriching ${leads.length} leads with ${validated.concurrency} parallel workers...`);
-    const throttledEnrich = withRateLimit(
-      (lead: Lead) => enrichLead(lead, validated.verifyEmails),
-      Math.min(validated.rpm, 10)
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledEnrich,
-      validated.concurrency
-    );
-  }
-
-  if (validated.useLLMScoring && leads.length > 0) {
-    console.log(`🧠 Scoring ${leads.length} leads with Ollama...`);
-    const throttledScore = withRateLimit(
-      (lead: Lead) => scoreLeadWithOllama(lead, query, validated.ollamaModel),
-      10
-    );
-    leads = await processWithConcurrency(
-      leads,
-      throttledScore,
-      Math.min(validated.concurrency, 2)
-    );
-  }
-
-  const unique = deduplicateLeads(leads);
-  console.log(`✅ Retrieved ${unique.length} unique leads from Crunchbase.`);
-
-  return unique;
+  let leads = await scrapeCrunchbaseInternal(query, opts);
+  leads = await postProcessLeads(leads, opts);
+  return leads;
 }
 
-/**
- * Export an array of leads to a file in the requested format.
- * Format is inferred from filepath extension when not explicitly provided.
- * Now supports .html which produces a beautiful interactive report with
- * embedded Google Maps previews, statistics, live search/filter and a
- * browser-based CSV export button.
- *
- * @param leads - Leads to export
- * @param filepath - Destination file path (e.g. "leads.csv", "report.html")
- * @param format - Optional explicit format (overrides extension)
- */
-export async function saveLeads(
-  leads: Lead[],
-  filepath: string,
-  format?: ExportFormat
-): Promise<void> {
-  if (!leads || leads.length === 0) {
-    console.warn('No leads to export.');
-    return;
-  }
+// Re-exports for public API (matches README examples, CLI usage, and test expectations)
+export {
+  loadConfig,
+  saveConfig,
+  CONFIG_PATH,
+  enrichLead,
+  isDisposableEmail,
+  scoreLeadWithOllama,
+  exportLeads,
+  exportToSheets,
+  withRateLimit,
+  randomDelay,
+  setProxies,
+  processWithConcurrency,
+  deduplicateLeads,
+};
 
-  const exportFormat = format ?? inferFormatFromPath(filepath);
-
-  console.log(`💾 Exporting ${leads.length} leads as ${exportFormat.toUpperCase()} to ${filepath}...`);
-
-  await exportLeads(leads, exportFormat, filepath);
-  console.log('✅ Export completed.');
-}
-
-/**
- * Generates a beautiful self-contained HTML report with embedded Google Maps
- * previews, summary statistics, live filtering and an in-browser CSV export.
- * The report requires no build step or external assets.
- *
- * @param leads - Array of leads (non-empty)
- * @param filepath - Output HTML path (default: leads-report.html)
- */
-export async function generateReport(
-  leads: Lead[],
-  filepath: string = 'leads-report.html'
-): Promise<void> {
-  if (!leads || leads.length === 0) {
-    console.warn('No leads to generate report for.');
-    return;
-  }
-  await exportLeads(leads, 'html', filepath);
-}
-
-/**
- * Export leads directly to Google Sheets.
- * Re-exported from exporter.ts (full implementation and docs live there).
- */
-export { exportToSheets };
-
-export { deduplicateLeads };
-export { loadConfig, saveConfig, CONFIG_PATH, SERVICE_ACCOUNT_PATH } from './config.js';
-export type { Lead, ScrapeOptions, ExportFormat, ScrapeSource, ConfigOptions, GoogleSheetsOptions } from './types.js';
-export { ScrapeOptionsSchema, inferFormatFromPath } from './types.js';
-export { isDisposableEmail } from './enricher.js';
-export { withRateLimit, randomDelay } from './utils/throttle.js';
-export { getWorkerPool, closeWorkerPool, BrowserWorkerPool } from './utils/browser.js';
+export type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions } from './types.js';
+export { ScrapeOptionsSchema };

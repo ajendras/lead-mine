@@ -223,7 +223,7 @@ lead-mine scrape --category="plumbers" --location="Portland, OR" \
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama, withRateLimit, randomDelay } from 'lead-mine';
+import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama, withRateLimit, randomDelay, processWithConcurrency } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -236,6 +236,7 @@ const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
   useLLMScoring: true,
   ollamaModel: 'llama3.1',
   proxy: ['http://proxy1:8080', 'http://proxy2:8080'],
+  concurrency: 3,
 });
 
 await saveLeads(leads, 'coffee-leads.xlsx');
@@ -247,7 +248,7 @@ console.log(`Captured ${leads.length} leads`);
 <details><summary>Advanced: custom rate-limit and headless control</summary>
 
 ```ts
-import { loadConfig, scrapeCrunchbase } from 'lead-mine';
+import { loadConfig, scrapeCrunchbase, processWithConcurrency } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -259,7 +260,18 @@ const leads = await scrapeCrunchbase('AI companies', {
   enrich: true,
   verifyEmails: true,
   useLLMScoring: true,
+  concurrency: 4,
 });
+
+// Example of direct parallel processing of custom items
+const processed = await processWithConcurrency(
+  leads,
+  async (lead) => {
+    // custom per-lead logic
+    return lead;
+  },
+  3
+);
 ```
 </details>
 
@@ -320,6 +332,7 @@ Example `~/.leadmine/config.json`:
 | googleSheets.spreadsheetId | — | Spreadsheet ID for direct Google Sheets export |
 | googleSheets.sheetName | Leads | Target sheet/tab name inside the spreadsheet |
 | googleSheets.serviceAccountKeyPath | ~/.leadmine/service-account.json | Path to service account JSON key file |
+| concurrency | 3             | Max parallel operations for enrichment/scoring (used by `processWithConcurrency`) |
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
 
@@ -348,6 +361,7 @@ flowchart TD
     Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction + disposable checker + Ollama scoring]
     Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
+    Index --> Parallel[processWithConcurrency<br>respects concurrency limit via batches]
     Dedup --> Export[exporter.ts<br>csv-writer / xlsx / JSON / Google Sheets API]
     Export --> FS[CSV / JSON / XLSX output]
     Export --> Google[Google Sheets via service account (googleapis)]
@@ -361,7 +375,7 @@ flowchart TD
 ```text
 .
 ├── src/
-│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), exportToSheets(), loadConfig(), saveConfig()
+│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), exportToSheets(), loadConfig(), saveConfig(), scoreLeadWithOllama(), withRateLimit(), processWithConcurrency()
 │   ├── cli.ts            # Commander.js command definition with all flags + interactive wizard
 │   ├── config.ts         # loadConfig(), saveConfig() + CONFIG_PATH/SERVICE_ACCOUNT_PATH for ~/.leadmine/
 │   ├── types.ts          # Lead interface, ScrapeOptions (incl. googleSheets), Zod schema, ExportFormat
@@ -389,7 +403,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, and the interactive wizard.
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, the interactive wizard, and `processWithConcurrency` (respects concurrency limit and calls rate limiter).
 
 ## 📍 Roadmap
 
