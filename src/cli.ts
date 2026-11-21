@@ -21,6 +21,7 @@ program
 Examples:
   $ lead-mine wizard
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --limit=30 --output=leads.csv
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --output=report.html
   $ lead-mine scrape --source=search --query="HVAC companies near Austin TX" --output=results.json --enrich
   $ lead-mine scrape --source=yelp --category="roof repair" --location="Seattle, WA" --limit=15
   $ lead-mine scrape --source=yellowpages --category="electricians" --location="Chicago, IL"
@@ -54,7 +55,7 @@ program
   .option('--limit <number>', 'Maximum number of leads to return', '25')
   .option(
     '-o, --output <filepath>',
-    'Output file path. Extension determines format (csv/json/xlsx)',
+    'Output file path. Extension determines format (csv/json/xlsx/html)',
     'leads.csv'
   )
   .option('--headless', 'Run browser in headless mode (default)', true)

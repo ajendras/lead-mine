@@ -433,9 +433,12 @@ export async function scrapeCrunchbase(
 /**
  * Export an array of leads to a file in the requested format.
  * Format is inferred from filepath extension when not explicitly provided.
+ * Now supports .html which produces a beautiful interactive report with
+ * embedded Google Maps previews, statistics, live search/filter and a
+ * browser-based CSV export button.
  *
  * @param leads - Leads to export
- * @param filepath - Destination file path (e.g. "leads.csv", "output.xlsx")
+ * @param filepath - Destination file path (e.g. "leads.csv", "report.html")
  * @param format - Optional explicit format (overrides extension)
  */
 export async function saveLeads(
@@ -454,6 +457,25 @@ export async function saveLeads(
 
   await exportLeads(leads, exportFormat, filepath);
   console.log('✅ Export completed.');
+}
+
+/**
+ * Generates a beautiful self-contained HTML report with embedded Google Maps
+ * previews, summary statistics, live filtering and an in-browser CSV export.
+ * The report requires no build step or external assets.
+ *
+ * @param leads - Array of leads (non-empty)
+ * @param filepath - Output HTML path (default: leads-report.html)
+ */
+export async function generateReport(
+  leads: Lead[],
+  filepath: string = 'leads-report.html'
+): Promise<void> {
+  if (!leads || leads.length === 0) {
+    console.warn('No leads to generate report for.');
+    return;
+  }
+  await exportLeads(leads, 'html', filepath);
 }
 
 /**
