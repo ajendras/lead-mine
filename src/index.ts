@@ -38,26 +38,27 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
 
 /**
  * Processes an array of items with limited concurrency.
- * Wraps the processor with rate limiting and executes in batches.
- * This is the internal utility tested by scrapers.test.ts.
+ * Uses simple batching to respect the concurrency limit and inserts polite random delays
+ * between batches. Called by enrichment and LLM scoring steps (as exercised by tests).
  */
 export async function processWithConcurrency<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
-  limit: number = 3
+  concurrency: number | undefined = 3
 ): Promise<R[]> {
-  if (items.length === 0) return [];
+  if (!items.length) return [];
 
+  const limit = Math.max(1, concurrency ?? 3);
   const results: R[] = [];
-  const rateLimitedProcessor = withRateLimit(processor);
 
   for (let i = 0; i < items.length; i += limit) {
     const batch = items.slice(i, i + limit);
-    const batchPromises = batch.map((item) => rateLimitedProcessor(item));
-    const batchResults = await Promise.all(batchPromises);
+    const batchResults = await Promise.all(batch.map((item) => processor(item)));
     results.push(...batchResults);
+
+    // polite delay between batches (skipped after final batch)
     if (i + limit < items.length) {
-      await randomDelay(400, 900);
+      await randomDelay(900, 1700);
     }
   }
 
@@ -65,50 +66,62 @@ export async function processWithConcurrency<T, R>(
 }
 
 /**
- * Applies deduplication, enrichment, LLM scoring and final limit.
- * Uses processWithConcurrency for parallel execution where enabled.
+ * Common post-processing pipeline: deduplication + optional enrichment + optional LLM scoring.
+ * Uses the corrected `opts.concurrency` value so TS is happy with the Zod-parsed options object.
  */
-async function postProcessLeads(leads: Lead[], options: ScrapeOptions): Promise<Lead[]> {
+async function postProcessLeads(
+  leads: Lead[],
+  opts: ScrapeOptions,
+  targetCategory: string
+): Promise<Lead[]> {
   let processed = deduplicateLeads(leads);
 
-  if (options.enrich !== false && processed.length > 0) {
-    const enriched = await processWithConcurrency(
+  if (opts.enrich !== false) {
+    const enrichProcessor = (lead: Lead) => enrichLead(lead, !!opts.verifyEmails);
+    processed = await processWithConcurrency(
       processed,
-      (lead) => enrichLead(lead, options.verifyEmails ?? false),
-      options.concurrency ?? 3
+      enrichProcessor,
+      opts.concurrency
     );
-    processed = enriched;
   }
 
-  if (options.useLLMScoring && processed.length > 0) {
-    const scored = await processWithConcurrency(
+  if (opts.useLLMScoring) {
+    const scoringProcessor = (lead: Lead) =>
+      scoreLeadWithOllama(lead, targetCategory, opts.ollamaModel || 'llama3.1');
+    processed = await processWithConcurrency(
       processed,
-      (lead) => scoreLeadWithOllama(lead, options.category || options.query || 'business', options.ollamaModel),
-      2
+      scoringProcessor,
+      opts.concurrency
     );
-    processed = scored;
   }
 
-  return processed.slice(0, options.limit ?? 20);
+  return processed;
 }
 
-// Public scraper API wrappers (apply config, proxies, post-processing, deduplication)
 export async function scrapeMaps(
   category: string,
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({
-    source: 'maps' as const,
-    category,
-    location,
+  const config = await loadConfig();
+  const mergedOpts = {
+    ...config,
+    source: 'maps' as ScrapeSource,
+    category: category.trim(),
+    location: location.trim(),
     ...options,
-  });
+  };
+  const opts = ScrapeOptionsSchema.parse(mergedOpts) as ScrapeOptions;
 
-  await setProxies(opts.proxy);
+  if (opts.proxy) {
+    const proxyList = Array.isArray(opts.proxy) ? opts.proxy : [opts.proxy];
+    setProxies(proxyList);
+  }
 
-  let leads = await scrapeGoogleMaps(category, location, opts);
-  leads = await postProcessLeads(leads, opts);
+  const scrape = () => scrapeGoogleMaps(category, location, opts.limit);
+  let leads = await withRateLimit(scrape, opts.rpm);
+  leads = await postProcessLeads(leads, opts, category);
+
   return leads;
 }
 
@@ -116,16 +129,25 @@ export async function scrapeSearch(
   query: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({
-    source: 'search' as const,
+  const config = await loadConfig();
+  const mergedOpts = {
+    ...config,
+    source: 'search' as ScrapeSource,
     query,
+    category: options.category || query,
     ...options,
-  });
+  };
+  const opts = ScrapeOptionsSchema.parse(mergedOpts) as ScrapeOptions;
 
-  await setProxies(opts.proxy);
+  if (opts.proxy) {
+    const proxyList = Array.isArray(opts.proxy) ? opts.proxy : [opts.proxy];
+    setProxies(proxyList);
+  }
 
-  let leads = await scrapeGoogleSearch(query, opts);
-  leads = await postProcessLeads(leads, opts);
+  const scrape = () => scrapeGoogleSearch(query, opts.limit);
+  let leads = await withRateLimit(scrape, opts.rpm);
+  leads = await postProcessLeads(leads, opts, query);
+
   return leads;
 }
 
@@ -134,17 +156,26 @@ export async function scrapeYelp(
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({
-    source: 'yelp' as const,
-    category,
-    location,
+  const config = await loadConfig();
+  const mergedOpts = {
+    ...config,
+    source: 'yelp' as ScrapeSource,
+    category: category.trim(),
+    location: location.trim(),
+    enrich: options.enrich ?? false, // matches CLI default for Yelp
     ...options,
-  });
+  };
+  const opts = ScrapeOptionsSchema.parse(mergedOpts) as ScrapeOptions;
 
-  await setProxies(opts.proxy);
+  if (opts.proxy) {
+    const proxyList = Array.isArray(opts.proxy) ? opts.proxy : [opts.proxy];
+    setProxies(proxyList);
+  }
 
-  let leads = await scrapeYelpInternal(category, location, opts);
-  leads = await postProcessLeads(leads, opts);
+  const scrape = () => scrapeYelpInternal(category, location, opts.limit);
+  let leads = await withRateLimit(scrape, opts.rpm);
+  leads = await postProcessLeads(leads, opts, category);
+
   return leads;
 }
 
@@ -153,17 +184,25 @@ export async function scrapeYellowPages(
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({
-    source: 'yellowpages' as const,
-    category,
-    location,
+  const config = await loadConfig();
+  const mergedOpts = {
+    ...config,
+    source: 'yellowpages' as ScrapeSource,
+    category: category.trim(),
+    location: location.trim(),
     ...options,
-  });
+  };
+  const opts = ScrapeOptionsSchema.parse(mergedOpts) as ScrapeOptions;
 
-  await setProxies(opts.proxy);
+  if (opts.proxy) {
+    const proxyList = Array.isArray(opts.proxy) ? opts.proxy : [opts.proxy];
+    setProxies(proxyList);
+  }
 
-  let leads = await scrapeYellowPagesInternal(category, location, opts);
-  leads = await postProcessLeads(leads, opts);
+  const scrape = () => scrapeYellowPagesInternal(category, location, opts.limit);
+  let leads = await withRateLimit(scrape, opts.rpm);
+  leads = await postProcessLeads(leads, opts, category);
+
   return leads;
 }
 
@@ -171,35 +210,64 @@ export async function scrapeCrunchbase(
   query: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({
-    source: 'crunchbase' as const,
+  const config = await loadConfig();
+  const mergedOpts = {
+    ...config,
+    source: 'crunchbase' as ScrapeSource,
     query,
+    category: options.category || 'startup',
     ...options,
-  });
+  };
+  const opts = ScrapeOptionsSchema.parse(mergedOpts) as ScrapeOptions;
 
-  await setProxies(opts.proxy);
+  if (opts.proxy) {
+    const proxyList = Array.isArray(opts.proxy) ? opts.proxy : [opts.proxy];
+    setProxies(proxyList);
+  }
 
-  let leads = await scrapeCrunchbaseInternal(query, opts);
-  leads = await postProcessLeads(leads, opts);
+  const scrape = () => scrapeCrunchbaseInternal(query, opts.limit);
+  let leads = await withRateLimit(scrape, opts.rpm);
+  leads = await postProcessLeads(leads, opts, query);
+
   return leads;
 }
 
-// Re-exports for public API (matches README examples, CLI usage, and test expectations)
+/**
+ * Saves leads to disk. Infers format from file extension and delegates to exportLeads.
+ * Exported so CLI and programmatic consumers (including wizard) can call leadMine.saveLeads.
+ */
+export async function saveLeads(leads: Lead[], filepath: string = 'leads.csv'): Promise<void> {
+  if (!Array.isArray(leads) || leads.length === 0) {
+    console.warn('⚠️ No leads to save.');
+    return;
+  }
+
+  const format = inferFormatFromPath(filepath);
+  await exportLeads(leads, format, filepath);
+  console.log(`✅ Saved ${leads.length} leads to ${filepath}`);
+}
+
+/**
+ * Public API re-exports (makes previously "unused" imports actually used, eliminates
+ * redeclaration errors, and matches all documented usage in README and CLI).
+ */
 export {
   loadConfig,
   saveConfig,
-  CONFIG_PATH,
-  enrichLead,
-  isDisposableEmail,
-  scoreLeadWithOllama,
-  exportLeads,
   exportToSheets,
+  enrichLead,
+  scoreLeadWithOllama,
+  isDisposableEmail,
   withRateLimit,
   randomDelay,
-  setProxies,
-  processWithConcurrency,
-  deduplicateLeads,
+  CONFIG_PATH,
 };
 
-export type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions } from './types.js';
-export { ScrapeOptionsSchema };
+export type {
+  Lead,
+  ScrapeOptions,
+  ExportFormat,
+  ScrapeSource,
+};
+
+export { ScrapeOptionsSchema, inferFormatFromPath };
