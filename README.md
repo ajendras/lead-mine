@@ -106,11 +106,18 @@ Guided first-time setup that creates ~/.leadmine/config.json and runs a sample s
 </td>
 <td></td>
 </tr>
+<tr>
+<td>
+🐳 <b>Docker Support</b><br>
+Official image with pre-bundled Chromium — perfect for servers, CI/CD and headless deployments with zero extra setup
+</td>
+<td></td>
+</tr>
 </table>
 
 ## 📦 Installation
 
-**Requirements:** Node.js >= 18.0.0 (see `engines` in package.json). Ollama must be installed separately for LLM scoring.
+**Requirements:** Node.js >= 18.0.0 (see `engines` in package.json). Ollama must be installed separately for LLM scoring. Docker is optional but recommended for server use.
 
 ```bash
 npm install -g lead-mine
@@ -124,6 +131,54 @@ cd lead-mine
 npm install
 npm run build
 ```
+
+## 🐳 Docker
+
+LeadMine ships a Dockerfile that produces a ready-to-run image based on the official Playwright Docker image. Chromium and all system dependencies are pre-bundled, eliminating download steps and making it ideal for servers, headless environments, and CI pipelines.
+
+```bash
+# Build the image (includes build step via prepare script)
+npm run docker:build
+# or
+docker build -t lead-mine .
+```
+
+**Usage examples**
+
+```bash
+# Interactive wizard (recommended first run)
+docker run -it --rm lead-mine wizard
+
+# Standard scrape with output mounted to host
+docker run --rm \
+  -v $(pwd):/data \
+  -v ~/.leadmine:/root/.leadmine \
+  lead-mine scrape \
+    --category="plumbers" \
+    --location="Portland, OR" \
+    --limit=30 \
+    --output=/data/leads.csv \
+    --enrich \
+    --verify-emails
+
+# Search source with LLM scoring (Ollama must be available on host; use --network=host if needed)
+docker run --rm \
+  -v $(pwd):/data \
+  -v ~/.leadmine:/root/.leadmine \
+  lead-mine scrape \
+    --source=search \
+    --query="HVAC companies near Austin TX" \
+    --output=/data/results.csv \
+    --enrich \
+    --use-llm-scoring
+```
+
+**Notes**
+- The image automatically skips Playwright browser downloads.
+- Mount `~/.leadmine` to persist configuration, service-account keys, and cached data.
+- For Ollama scoring inside Docker, run Ollama on the host and add `--network=host` (or link containers).
+- The entrypoint is the `lead-mine` binary; any CLI command works.
+- Image size is ~1.2 GB (Playwright base); extend it for custom needs.
 
 ## ⚡ Quick start
 
@@ -218,6 +273,15 @@ Multiple proxies (CLI rotates through them):
 ```bash
 lead-mine scrape --category="plumbers" --location="Portland, OR" \
   --proxy http://proxy1.example.com:8080 http://proxy2.example.com:8080
+```
+
+**Docker usage** (see Docker section above for full details):
+
+```bash
+docker run --rm \
+  -v $(pwd):/data \
+  -v ~/.leadmine:/root/.leadmine \
+  lead-mine scrape --category="plumbers" --location="Portland, OR" --output=/data/leads.csv --enrich
 ```
 
 Programmatic usage with custom options (see `src/index.ts`):
@@ -336,6 +400,8 @@ Example `~/.leadmine/config.json`:
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
 
+When using the Docker image, the same config file is loaded from the mounted `~/.leadmine` (or `/root/.leadmine`) volume.
+
 ## 🔑 Google Sheets Setup
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/), create/select a project.
@@ -394,6 +460,7 @@ flowchart TD
 │   └── scrapers.test.ts  # Vitest mocks + fixture tests for parsers, dedup, export, sheets
 ├── playwright.config.ts  # Headless config, user-agent, timeouts
 ├── tsconfig.json
+├── Dockerfile            # Official image with bundled Chromium (Playwright base)
 └── package.json          # bin:"lead-mine", scripts, dependencies
 ```
 
@@ -418,7 +485,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Local LLM lead scoring with Ollama (relevance, budget signals)
 - [x] Parallel browser contexts with worker pool
 - [x] HTML report generator with embedded map previews
-- [ ] Docker image with bundled Chromium for server use
+- [x] Docker image with bundled Chromium for server use
 - [ ] CRM import templates (HubSpot CSV, Salesforce)
 - [ ] Rate-limit presets per source with exponential backoff
 
