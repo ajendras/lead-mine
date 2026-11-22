@@ -486,7 +486,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Parallel browser contexts with worker pool
 - [x] HTML report generator with embedded map previews
 - [x] Docker image with bundled Chromium for server use
-- [ ] CRM import templates (HubSpot CSV, Salesforce)
+- [x] CRM import templates (HubSpot CSV, Salesforce)
 - [ ] Rate-limit presets per source with exponential backoff
 
 > 🤖 This roadmap is worked through continuously — ideas and PRs welcome!

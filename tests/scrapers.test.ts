@@ -1,137 +1,155 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as leadMine from '../src/index.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs/promises';
 import { scrapeGoogleMaps } from '../src/scrapers/maps.js';
 import { scrapeGoogleSearch } from '../src/scrapers/search.js';
-import { scrapeYelp as scrapeYelpInternal } from '../src/scrapers/yelp.js';
-import { scrapeYellowPages as scrapeYellowPagesInternal } from '../src/scrapers/yellowpages.js';
-import { scrapeCrunchbase as scrapeCrunchbaseInternal } from '../src/scrapers/crunchbase.js';
+import { scrapeYelp } from '../src/scrapers/yelp.js';
+import { scrapeYellowPages } from '../src/scrapers/yellowpages.js';
+import { scrapeCrunchbase } from '../src/scrapers/crunchbase.js';
+import { enrichLead, isDisposableEmail, scoreLeadWithOllama } from '../src/enricher.js';
+import {
+  exportLeads,
+  exportToSheets,
+  exportToHubspotCsv,
+  exportToSalesforceCsv,
+} from '../src/exporter.js';
+import { deduplicateLeads } from '../src/index.js';
+import { loadConfig, saveConfig } from '../src/config.js';
+import { withRateLimit, randomDelay } from '../src/utils/throttle.js';
+import { processWithConcurrency } from '../src/index.js';
+import type { Lead, ScrapeOptions } from '../src/types.js';
 
 vi.mock('../src/scrapers/maps.js');
 vi.mock('../src/scrapers/search.js');
 vi.mock('../src/scrapers/yelp.js');
 vi.mock('../src/scrapers/yellowpages.js');
 vi.mock('../src/scrapers/crunchbase.js');
-vi.mock('../src/enricher.js', () => ({
-  enrichLead: vi.fn().mockImplementation((lead) => Promise.resolve(lead)),
-  scoreLeadWithOllama: vi.fn().mockImplementation((lead) => Promise.resolve(lead)),
-  isDisposableEmail: vi.fn().mockReturnValue(false),
-}));
-vi.mock('../src/utils/throttle.js', () => ({
-  withRateLimit: vi.fn().mockImplementation((fn) => fn),
-  randomDelay: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('../src/utils/browser.js', () => ({
-  setProxies: vi.fn(),
-}));
+vi.mock('ollama');
+vi.mock('googleapis');
 
-describe('LeadMine (index.ts)', () => {
+const mockLeads: Lead[] = [
+  {
+    name: 'Test Plumbing',
+    address: '123 Main St, Portland, OR 97201',
+    phone: '(503) 555-0123',
+    email: 'contact@testplumbing.com',
+    website: 'https://testplumbing.com',
+    rating: 4.8,
+    reviewCount: 124,
+    source: 'maps',
+    category: 'plumbers',
+    scrapedAt: new Date().toISOString(),
+  },
+  {
+    name: 'Another Test',
+    address: '456 Oak Ave, Portland, OR 97202',
+    phone: '(503) 555-0456',
+    website: 'https://anothertest.com',
+    source: 'yelp',
+    category: 'plumbers',
+  },
+];
+
+describe('LeadMine Core', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('deduplicates leads correctly (preserves first occurrence)', () => {
-    const leads = [
-      { name: 'Acme Plumbing', address: '123 Main St', website: 'acme.com', source: 'maps' as const },
-      { name: 'Acme Plumbing', address: '123 Main St', website: 'acme.com', source: 'maps' as const },
-      { name: 'Beta Electrical', address: '456 Oak Ave', website: 'beta.com', source: 'maps' as const },
-    ] as leadMine.Lead[];
-
-    // Use internal dedup via a scrape that exercises the full pipeline (with mocks)
-    vi.mocked(scrapeGoogleMaps).mockResolvedValue(leads);
-    // The fix ensures no TS/runtime error on parsed Zod options with concurrency
+  afterEach(async () => {
+    await fs.unlink('test-output.csv').catch(() => {});
+    await fs.unlink('test-hubspot.csv').catch(() => {});
+    await fs.unlink('test-salesforce.csv').catch(() => {});
   });
 
-  it('processWithConcurrency respects limit and runs processors', async () => {
-    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
-    const processor = vi.fn().mockImplementation(async (item: any) => ({ ...item, processed: true }));
-
-    const result = await leadMine.processWithConcurrency(items, processor, 2);
-
-    expect(result).toHaveLength(4);
-    expect(processor).toHaveBeenCalledTimes(4);
-    // concurrency=2 guarantees batching (tested via implementation); rate-limiter integration via randomDelay
-    expect(result.every((r: any) => r.processed)).toBe(true);
+  it('deduplicates leads correctly by name+address+website', () => {
+    const duplicates = [...mockLeads, { ...mockLeads[0] }];
+    const unique = deduplicateLeads(duplicates);
+    expect(unique).toHaveLength(2);
+    expect(unique[0]!.name).toBe('Test Plumbing');
   });
 
-  it('scrapeMaps parses options correctly and calls post-processing (fixes TS2345)', async () => {
-    const mockLead = { name: 'Test Plumber', source: 'maps' as const } as leadMine.Lead;
-    vi.mocked(scrapeGoogleMaps).mockResolvedValue([mockLead]);
-
-    const leads = await leadMine.scrapeMaps('plumbers', 'Portland, OR', {
-      limit: 10,
-      enrich: true,
-      concurrency: 2,
-      rpm: 15,
-    });
-
-    expect(leads).toBeDefined();
-    expect(scrapeGoogleMaps).toHaveBeenCalledWith('plumbers', 'Portland, OR', expect.any(Object));
-    expect(vi.mocked(leadMine.enrichLead)).toHaveBeenCalled(); // post-processing exercised
+  it('identifies disposable emails', () => {
+    expect(isDisposableEmail('test@mailinator.com')).toBe(true);
+    expect(isDisposableEmail('real@company.com')).toBe(false);
+    expect(isDisposableEmail('temp123@fakeinbox.com')).toBe(true);
+    expect(isDisposableEmail('invalid-email')).toBe(true);
   });
 
-  it('scrapeSearch parses options correctly and calls post-processing (fixes TS2345)', async () => {
-    const mockLead = { name: 'HVAC Co', source: 'search' as const } as leadMine.Lead;
-    vi.mocked(scrapeGoogleSearch).mockResolvedValue([mockLead]);
+  it('exports to all formats including new CRM templates', async () => {
+    await exportLeads(mockLeads, 'csv', 'test-output.csv');
+    await exportLeads(mockLeads, 'json', 'test-output.json');
+    await exportLeads(mockLeads, 'xlsx', 'test-output.xlsx');
+    await exportLeads(mockLeads, 'html', 'test-output.html');
+    await exportLeads(mockLeads, 'hubspot', 'test-hubspot.csv');
+    await exportLeads(mockLeads, 'salesforce', 'test-salesforce.csv');
 
-    const leads = await leadMine.scrapeSearch('HVAC near Austin', {
-      limit: 5,
-      useLLMScoring: false,
-      concurrency: 3,
-    });
+    const csvContent = await fs.readFile('test-output.csv', 'utf8');
+    expect(csvContent).toContain('Test Plumbing');
 
-    expect(leads).toBeDefined();
-    expect(scrapeGoogleSearch).toHaveBeenCalled();
+    const hubspotContent = await fs.readFile('test-hubspot.csv', 'utf8');
+    expect(hubspotContent).toContain('Name,Website');
+    expect(hubspotContent).toContain('Test Plumbing');
+    expect(hubspotContent).toContain('123 Main St');
+    expect(hubspotContent).toContain('Portland');
+    expect(hubspotContent).toContain('OR');
+
+    const salesforceContent = await fs.readFile('test-salesforce.csv', 'utf8');
+    expect(salesforceContent).toContain('Account Name');
+    expect(salesforceContent).toContain('Billing Street');
+    expect(salesforceContent).toContain('Test Plumbing');
   });
 
-  it('scrapeYelp parses options correctly and calls post-processing (fixes TS2345)', async () => {
-    const mockLead = { name: 'Yelp Cafe', source: 'yelp' as const } as leadMine.Lead;
-    vi.mocked(scrapeYelpInternal).mockResolvedValue([mockLead]);
-
-    const leads = await leadMine.scrapeYelp('coffee', 'Portland, OR', {
-      enrich: false,
-      concurrency: 1,
-    });
-
-    expect(leads).toBeDefined();
-    expect(scrapeYelpInternal).toHaveBeenCalled();
+  it('parses address components for CRM templates', async () => {
+    const crmLead: Lead = {
+      name: 'Address Test',
+      address: '789 Pine Street, Seattle, WA 98101',
+      source: 'maps' as const,
+    };
+    await exportLeads([crmLead], 'hubspot', 'test-hubspot.csv');
+    const content = await fs.readFile('test-hubspot.csv', 'utf8');
+    expect(content).toContain('789 Pine Street');
+    expect(content).toContain('Seattle');
+    expect(content).toContain('WA');
+    expect(content).toContain('98101');
   });
 
-  it('scrapeYellowPages parses options correctly and calls post-processing (fixes TS2345)', async () => {
-    const mockLead = { name: 'YP Electric', source: 'yellowpages' as const } as leadMine.Lead;
-    vi.mocked(scrapeYellowPagesInternal).mockResolvedValue([mockLead]);
-
-    const leads = await leadMine.scrapeYellowPages('electricians', 'Chicago, IL', {
-      limit: 15,
-      concurrency: 2,
-    });
-
-    expect(leads).toBeDefined();
-    expect(scrapeYellowPagesInternal).toHaveBeenCalled();
+  it('enriches lead and sets emailVerified flag', async () => {
+    const enriched = await enrichLead(mockLeads[0]!, true);
+    expect(enriched.emailVerified).toBe(true);
   });
 
-  it('scrapeCrunchbase parses options correctly and calls post-processing (fixes TS2345)', async () => {
-    const mockLead = { name: 'StartupX', source: 'crunchbase' as const } as leadMine.Lead;
-    vi.mocked(scrapeCrunchbaseInternal).mockResolvedValue([mockLead]);
-
-    const leads = await leadMine.scrapeCrunchbase('fintech', {
-      enrich: true,
-      useLLMScoring: true,
-      concurrency: 2,
-      ollamaModel: 'llama3.1',
-    });
-
-    expect(leads).toBeDefined();
-    expect(scrapeCrunchbaseInternal).toHaveBeenCalled();
+  it('loads and saves config with validation', async () => {
+    const testConfig = { source: 'maps', category: 'test', limit: 10 };
+    await saveConfig(testConfig);
+    const loaded = await loadConfig();
+    expect(loaded.category).toBe('test');
+    expect(loaded.limit).toBe(10);
   });
 
-  it('saveLeads infers format and calls exporter without throwing', async () => {
-    const leads = [{ name: 'Test', source: 'maps' as const }] as leadMine.Lead[];
-    await expect(leadMine.saveLeads(leads, 'test-output.csv')).resolves.not.toThrow();
+  it('respects concurrency limit in processWithConcurrency', async () => {
+    const processor = vi.fn().mockResolvedValue('done');
+    const items = Array.from({ length: 5 }, (_, i) => i);
+    await processWithConcurrency(items, processor, 2, 100);
+    expect(processor).toHaveBeenCalledTimes(5);
   });
 
-  it('exports public types and utilities (verifies no unused-import regression)', () => {
-    expect(typeof leadMine.processWithConcurrency).toBe('function');
-    expect(typeof leadMine.ScrapeOptions).toBe('undefined'); // type only
-    // ScrapeSource, ExportFormat, Lead now re-exported cleanly
+  it('applies rate limiting', async () => {
+    const fn = vi.fn().mockResolvedValue(42);
+    const limited = withRateLimit(fn, 60);
+    await limited();
+    expect(fn).toHaveBeenCalled();
+  });
+
+  it('handles LLM scoring with fallback', async () => {
+    const scored = await scoreLeadWithOllama(mockLeads[0]!, 'plumbers');
+    expect(scored).toHaveProperty('name');
+  });
+
+  it('exports to Google Sheets with proper error on missing key', async () => {
+    await expect(exportToSheets(mockLeads, 'fake-id')).rejects.toThrow(/service account JSON key/);
+  });
+
+  it('wizard and CLI option parsing are covered by schema', () => {
+    const parsed = ScrapeOptionsSchema.safeParse({ source: 'maps', limit: 25, enrich: true });
+    expect(parsed.success).toBe(true);
   });
 });

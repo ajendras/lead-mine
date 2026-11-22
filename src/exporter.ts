@@ -12,10 +12,12 @@ import type { Lead, ExportFormat, GoogleSheetsOptions } from './types.js';
  * Node fs for JSON, the xlsx library for Excel output, and a Tailwind-based
  * self-contained HTML document with embedded Google Maps previews for HTML.
  *
- * Columns are normalized and ordered consistently across formats.
+ * Columns are normalized and ordered consistently across formats. New
+ * 'hubspot' and 'salesforce' formats produce CRM-ready CSVs with address
+ * component parsing.
  *
  * @param leads - Array of leads to export (must be non-empty)
- * @param format - Explicit format (csv | json | xlsx | html)
+ * @param format - Explicit format (csv | json | xlsx | html | hubspot | salesforce)
  * @param filepath - Destination path on disk
  * @throws {Error} With a clear message when validation or I/O fails
  */
@@ -55,8 +57,16 @@ export async function exportLeads(
       case 'html':
         await exportToHtml(leads, filepath);
         break;
+      case 'hubspot':
+        await exportToHubspotCsv(leads, filepath);
+        break;
+      case 'salesforce':
+        await exportToSalesforceCsv(leads, filepath);
+        break;
       default:
-        throw new Error(`Unsupported export format "${format}". Must be csv, json, xlsx or html.`);
+        throw new Error(
+          `Unsupported export format "${format}". Must be csv, json, xlsx, html, hubspot or salesforce.`
+        );
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -387,6 +397,138 @@ async function exportToHtml(leads: Lead[], filepath: string): Promise<void> {
 
   await fs.writeFile(filepath, html, 'utf8');
   console.log(`✅ Generated interactive HTML report (${leads.length} leads) with embedded map previews at ${filepath}`);
+}
+
+/**
+ * Simple parser for common US address formats (street, city, state zip).
+ * Used by CRM templates to split a single address string into components.
+ */
+function parseAddress(fullAddress = ''): {
+  street: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+} {
+  if (!fullAddress) {
+    return { street: '', city: '', state: '', postalCode: '', country: 'United States' };
+  }
+
+  const addr = fullAddress.replace(/\s+/g, ' ').trim();
+  const match = addr.match(
+    /^(.*?),\s*(.+?),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)?(?:,\s*(.+))?$/i
+  );
+
+  if (match) {
+    return {
+      street: match[1]!.trim(),
+      city: match[2]!.trim(),
+      state: match[3]!.toUpperCase(),
+      postalCode: match[4] || '',
+      country: match[5] ? match[5].trim() : 'United States',
+    };
+  }
+
+  // Fallback split on commas
+  const parts = addr.split(',').map((p) => p.trim());
+  const zipMatch = addr.match(/(\d{5}(?:-\d{4})?)/);
+  return {
+    street: parts[0] || '',
+    city: parts[1] || '',
+    state: parts[2] ? parts[2].split(/\s+/)[0]!.toUpperCase() : '',
+    postalCode: zipMatch ? zipMatch[1]! : '',
+    country: 'United States',
+  };
+}
+
+async function exportToHubspotCsv(leads: Lead[], filepath: string): Promise<void> {
+  const header = [
+    { id: 'name', title: 'Name' },
+    { id: 'website', title: 'Website' },
+    { id: 'phone', title: 'Phone Number' },
+    { id: 'email', title: 'Email' },
+    { id: 'street', title: 'Street Address' },
+    { id: 'city', title: 'City' },
+    { id: 'state', title: 'State/Region' },
+    { id: 'postalCode', title: 'Postal Code' },
+    { id: 'country', title: 'Country/Region' },
+    { id: 'industry', title: 'Industry' },
+    { id: 'description', title: 'Description' },
+    { id: 'source', title: 'Lead Source' },
+  ];
+
+  const csvWriter = createObjectCsvWriter({
+    path: filepath,
+    header,
+    alwaysQuote: true,
+    encoding: 'utf8',
+  });
+
+  const records = leads.map((lead) => {
+    const parsed = parseAddress(lead.address);
+    return {
+      name: lead.name || '',
+      website: lead.website ? lead.website.replace(/^https?:\/\//i, '') : '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      street: parsed.street || lead.address || '',
+      city: parsed.city,
+      state: parsed.state,
+      postalCode: parsed.postalCode,
+      country: parsed.country,
+      industry: lead.category || '',
+      description: lead.scoringNotes || `Lead from ${lead.source} scrape`,
+      source: `LeadMine-${lead.source}`,
+    };
+  });
+
+  await csvWriter.writeRecords(records);
+  console.log(`✅ Exported ${leads.length} leads as HubSpot Company import template to ${filepath}`);
+}
+
+async function exportToSalesforceCsv(leads: Lead[], filepath: string): Promise<void> {
+  const header = [
+    { id: 'accountName', title: 'Account Name' },
+    { id: 'website', title: 'Website' },
+    { id: 'phone', title: 'Phone' },
+    { id: 'email', title: 'Email' },
+    { id: 'billingStreet', title: 'Billing Street' },
+    { id: 'billingCity', title: 'Billing City' },
+    { id: 'billingState', title: 'Billing State/Province' },
+    { id: 'billingPostalCode', title: 'Billing Zip/Postal Code' },
+    { id: 'billingCountry', title: 'Billing Country' },
+    { id: 'industry', title: 'Industry' },
+    { id: 'description', title: 'Description' },
+    { id: 'accountSource', title: 'Account Source' },
+  ];
+
+  const csvWriter = createObjectCsvWriter({
+    path: filepath,
+    header,
+    alwaysQuote: true,
+    encoding: 'utf8',
+  });
+
+  const records = leads.map((lead) => {
+    const parsed = parseAddress(lead.address);
+    return {
+      accountName: lead.name || '',
+      website: lead.website ? lead.website.replace(/^https?:\/\//i, '') : '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      billingStreet: parsed.street || lead.address || '',
+      billingCity: parsed.city,
+      billingState: parsed.state,
+      billingPostalCode: parsed.postalCode,
+      billingCountry: parsed.country,
+      industry: lead.category || '',
+      description: lead.scoringNotes || `Lead from ${lead.source} scrape`,
+      accountSource: `LeadMine ${lead.source.toUpperCase()}`,
+    };
+  });
+
+  await csvWriter.writeRecords(records);
+  console.log(`✅ Exported ${leads.length} leads as Salesforce Account import template to ${filepath}`);
 }
 
 /**

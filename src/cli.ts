@@ -31,6 +31,8 @@ Examples:
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --sheets=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --use-llm-scoring --ollama-model=llama3.1
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --concurrency=4
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --output=leads.hubspot.csv --enrich
+  $ lead-mine scrape --category="roofers" --location="Austin, TX" --output=accounts.salesforce.csv --enrich --use-llm-scoring
     `
   );
 
@@ -55,7 +57,7 @@ program
   .option('--limit <number>', 'Maximum number of leads to return', '25')
   .option(
     '-o, --output <filepath>',
-    'Output file path. Extension determines format (csv/json/xlsx/html)',
+    'Output file path. Extension or filename determines format (csv/json/xlsx/html/hubspot/salesforce)',
     'leads.csv'
   )
   .option('--headless', 'Run browser in headless mode (default)', true)
