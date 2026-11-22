@@ -1,36 +1,54 @@
-let lastRequestTime = Date.now() - 10000;
+/**
+ * Throttle utilities for polite scraping with rate limits and random delays.
+ * Updated to support generic function signatures so it works with per-item processors.
+ */
+
+let lastRequestTime = 0;
 
 /**
- * Returns a promise that resolves after a random delay between min and max ms.
- * Used to make scraping appear more human and avoid rate limits.
+ * Wraps an async function with rate limiting based on RPM.
+ * Generic over arguments to support functions like (item: T) => Promise<R>.
  */
-export function randomDelay(min: number = 800, max: number = 2200): Promise<void> {
-  const delay = Math.random() * (max - min) + min;
-  return new Promise((resolve) => setTimeout(resolve, delay));
+export function withRateLimit<T extends any[], R>(
+  fn: (...args: T) => Promise<R>,
+  rpm: number = 20
+): (...args: T) => Promise<R> {
+  const intervalMs = 60000 / rpm;
+
+  return async (...args: T): Promise<R> => {
+    const now = Date.now();
+    if (lastRequestTime > 0) {
+      const elapsed = now - lastRequestTime;
+      if (elapsed < intervalMs) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs - elapsed));
+      }
+    }
+    lastRequestTime = Date.now();
+    return fn(...args);
+  };
 }
 
 /**
- * Wraps the given async operation with rate limiting based on RPM.
- * The returned function can be called to execute the operation under the rate limit.
- * Uses a shared timer to throttle requests across different scrapers.
+ * Adds a random polite delay between minMs and maxMs.
  */
-export function withRateLimit<T>(
-  operation: () => Promise<T>,
-  rpm: number = 20
-): () => Promise<T> {
-  return async () => {
-    const minInterval = 60000 / rpm;
+export async function randomDelay(minMs: number = 1000, maxMs: number = 3000): Promise<void> {
+  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+/**
+ * Simple throttle for non-async functions (kept for completeness).
+ */
+export function throttle<T extends any[], R>(
+  fn: (...args: T) => R,
+  delayMs: number
+): (...args: T) => void {
+  let lastCall = 0;
+  return (...args: T) => {
     const now = Date.now();
-    const timeElapsed = now - lastRequestTime;
-
-    if (timeElapsed < minInterval) {
-      await randomDelay(
-        Math.max(0, minInterval - timeElapsed),
-        minInterval - timeElapsed + 150
-      );
+    if (now - lastCall >= delayMs) {
+      lastCall = now;
+      fn(...args);
     }
-
-    lastRequestTime = Date.now();
-    return operation();
   };
 }
