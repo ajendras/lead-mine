@@ -1,51 +1,36 @@
-/**
- * Utility for adding random delays to make scraping more human-like and avoid rate blocks.
- * Also provides withRateLimit higher-order function to throttle calls to a given RPM.
- */
+let lastRequestTime = Date.now() - 10000;
 
-export async function randomDelay(minMs = 800, maxMs = 2200): Promise<void> {
-  if (minMs > maxMs) [minMs, maxMs] = [maxMs, minMs];
-  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-  await new Promise((resolve) => setTimeout(resolve, delay));
+/**
+ * Returns a promise that resolves after a random delay between min and max ms.
+ * Used to make scraping appear more human and avoid rate limits.
+ */
+export function randomDelay(min: number = 800, max: number = 2200): Promise<void> {
+  const delay = Math.random() * (max - min) + min;
+  return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 /**
- * Wraps a function with rate limiting. Calls are spaced at least 60_000 / rpm milliseconds apart.
- * Adds small random jitter using randomDelay to appear more natural.
- * Correctly forwards *all* arguments to the wrapped function using rest/spread (this was the root cause of the test failure).
- * Returns a promise regardless of whether the original fn is async.
- *
- * Used throughout the scrapers to respect politeness (e.g. rpm: 12 for enrichment).
+ * Wraps the given async operation with rate limiting based on RPM.
+ * The returned function can be called to execute the operation under the rate limit.
+ * Uses a shared timer to throttle requests across different scrapers.
  */
-export function withRateLimit<T extends (...args: any[]) => any>(
-  fn: T,
-  rpm: number = 30
-): (...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>> {
-  const minInterval = Math.max(100, Math.floor(60000 / rpm));
-
-  let lastCallTime = 0;
-
-  return async (...args: Parameters<T>) => {
+export function withRateLimit<T>(
+  operation: () => Promise<T>,
+  rpm: number = 20
+): () => Promise<T> {
+  return async () => {
+    const minInterval = 60000 / rpm;
     const now = Date.now();
-    let waitTime = 0;
+    const timeElapsed = now - lastRequestTime;
 
-    if (now - lastCallTime < minInterval) {
-      waitTime = minInterval - (now - lastCallTime) + Math.floor(Math.random() * 200);
-    } else {
-      // always add a small random delay for politeness between calls
-      waitTime = Math.floor(Math.random() * 250) + 50;
+    if (timeElapsed < minInterval) {
+      await randomDelay(
+        Math.max(0, minInterval - timeElapsed),
+        minInterval - timeElapsed + 150
+      );
     }
 
-    if (waitTime > 0) {
-      await randomDelay(waitTime, waitTime + 350);
-    }
-
-    lastCallTime = Date.now();
-
-    const result = fn(...args);
-    if (result instanceof Promise) {
-      return await result;
-    }
-    return result as Awaited<ReturnType<T>>;
+    lastRequestTime = Date.now();
+    return operation();
   };
 }
