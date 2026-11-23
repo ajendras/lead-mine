@@ -72,7 +72,7 @@ Filters out emails from known disposable providers using a local domain list (co
 </td>
 <td>
 ⏱️ <b>Polite Crawling</b><br>
-Built-in rate limiting, random delays, user-agent rotation and stealth to reduce blocks
+Per-source rate-limit presets (maps: 6rpm, search: 10rpm, etc.), random delays, exponential backoff on 429/blocks, user-agent rotation and stealth to reduce blocks
 </td>
 </tr>
 <tr>
@@ -191,7 +191,7 @@ lead-mine wizard
 It will ask a few questions, create a config file with your preferences, and run a sample scrape so you can see results immediately.
 
 ```ts
-import { loadConfig, scrapeMaps, scrapeYellowPages, saveLeads, exportToSheets } from 'lead-mine';
+import { loadConfig, scrapeMaps, scrapeYellowPages, saveLeads, exportToSheets, RATE_LIMIT_PRESETS } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -275,6 +275,12 @@ lead-mine scrape --category="plumbers" --location="Portland, OR" \
   --proxy http://proxy1.example.com:8080 http://proxy2.example.com:8080
 ```
 
+Rate-limit override (uses preset for source otherwise):
+
+```bash
+lead-mine scrape --category="plumbers" --location="Portland, OR" --rpm=8
+```
+
 **Docker usage** (see Docker section above for full details):
 
 ```bash
@@ -287,7 +293,7 @@ docker run --rm \
 Programmatic usage with custom options (see `src/index.ts`):
 
 ```ts
-import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama, withRateLimit, randomDelay, processWithConcurrency } from 'lead-mine';
+import { loadConfig, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama, withRateLimit, randomDelay, processWithConcurrency, RATE_LIMIT_PRESETS } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -312,7 +318,7 @@ console.log(`Captured ${leads.length} leads`);
 <details><summary>Advanced: custom rate-limit and headless control</summary>
 
 ```ts
-import { loadConfig, scrapeCrunchbase, processWithConcurrency } from 'lead-mine';
+import { loadConfig, scrapeCrunchbase, processWithConcurrency, RATE_LIMIT_PRESETS } from 'lead-mine';
 
 const config = await loadConfig();
 
@@ -320,21 +326,21 @@ const leads = await scrapeCrunchbase('AI companies', {
   ...config,
   limit: 20,
   headless: false,
-  rpm: 8,
   enrich: true,
   verifyEmails: true,
   useLLMScoring: true,
   concurrency: 4,
 });
 
-// Example of direct parallel processing of custom items
+// Example of direct parallel processing of custom items using preset
 const processed = await processWithConcurrency(
   leads,
   async (lead) => {
     // custom per-lead logic
     return lead;
   },
-  3
+  3,
+  { source: 'crunchbase' } // or RATE_LIMIT_PRESETS.crunchbase.rpm
 );
 ```
 </details>
@@ -352,7 +358,7 @@ const processed = await processWithConcurrency(
 
 The easiest way to create your configuration is by running `lead-mine wizard`. It will interactively ask questions and write a ready-to-use `~/.leadmine/config.json`.
 
-LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually or via the wizard). Any `ScrapeOptions` (including `source`, `category` and `location`) can be set here. Command-line flags and programmatic options take precedence.
+LeadMine automatically loads defaults from `~/.leadmine/config.json` (created manually or via the wizard). Any `ScrapeOptions` (including `source`, `category` and `location`) can be set here. Command-line flags and programmatic options take precedence. If `rpm` is omitted, a polite preset for the chosen `source` is used automatically.
 
 Example `~/.leadmine/config.json`:
 
@@ -366,7 +372,6 @@ Example `~/.leadmine/config.json`:
   "verifyEmails": true,
   "useLLMScoring": true,
   "ollamaModel": "llama3.1",
-  "rpm": 12,
   "headless": true,
   "minRating": 4.0,
   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -389,7 +394,7 @@ Example `~/.leadmine/config.json`:
 | useLLMScoring | false       | Enable local LLM scoring via Ollama for relevance (to target) and budget signals |
 | ollamaModel | llama3.1      | Ollama model name (must be pulled locally; llama3.1, mistral, phi3 supported) |
 | headless    | true          | Run browser without GUI (`--no-headless` to disable) |
-| rpm         | 20            | Requests per minute for rate limiting (`withRateLimit`) |
+| rpm         | varies by source | Requests per minute. Each source has a polite preset (maps: 6, search: 10, yelp: 15, yellowpages: 25, crunchbase: 12). Overridable via flag/config. Exponential backoff is applied automatically on rate-limit or block errors. |
 | minRating   | —             | Filter leads by minimum rating (0–5) |
 | userAgent   | —             | Override default stealth user agent |
 | proxy       | —             | Single proxy URL or array of URLs for rotation. Residential proxies supported via provider gateway (e.g. `http://user-zone-resi:pass@gate.smartproxy.com:7000`). Rotates automatically across browser sessions. |
@@ -423,7 +428,7 @@ flowchart TD
     Index --> Yelp[src/scrapers/yelp.ts<br>list + detail page visits]
     Index --> YellowPages[src/scrapers/yellowpages.ts<br>list extraction with stable classes]
     Index --> Crunchbase[src/scrapers/crunchbase.ts<br>profile scraping + website extraction]
-    Maps & Search & Yelp & YellowPages & Crunchbase --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit]
+    Maps & Search & Yelp & YellowPages & Crunchbase --> Throttle[src/utils/throttle.ts<br>randomDelay + withRateLimit (presets + backoff)]
     Index --> Enrich[enricher.ts<br>launchStealthBrowser + regex extraction + disposable checker + Ollama scoring]
     Enrich --> Browser[src/utils/browser.ts<br>stealth Chromium + proxy rotator]
     Index --> Dedup[deduplicateLeads<br>name+address+website key]
@@ -441,10 +446,10 @@ flowchart TD
 ```text
 .
 ├── src/
-│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), exportToSheets(), loadConfig(), saveConfig(), scoreLeadWithOllama(), withRateLimit(), processWithConcurrency()
+│   ├── index.ts          # Public API: scrapeMaps(), scrapeSearch(), scrapeYelp(), scrapeYellowPages(), scrapeCrunchbase(), saveLeads(), exportToSheets(), loadConfig(), saveConfig(), scoreLeadWithOllama(), withRateLimit(), processWithConcurrency(), RATE_LIMIT_PRESETS
 │   ├── cli.ts            # Commander.js command definition with all flags + interactive wizard
 │   ├── config.ts         # loadConfig(), saveConfig() + CONFIG_PATH/SERVICE_ACCOUNT_PATH for ~/.leadmine/
-│   ├── types.ts          # Lead interface, ScrapeOptions (incl. googleSheets), Zod schema, ExportFormat
+│   ├── types.ts          # Lead interface, ScrapeOptions (incl. googleSheets), RateLimitPreset + RATE_LIMIT_PRESETS, Zod schema, ExportFormat
 │   ├── enricher.ts       # enrichLead() + extractEnrichedInfo (mailto, regex, tel:) + isDisposableEmail() + scoreLeadWithOllama()
 │   ├── exporter.ts       # exportLeads() + new exportToSheets() using googleapis
 │   ├── scrapers/
@@ -455,7 +460,7 @@ flowchart TD
 │   │   └── crunchbase.ts # scrapeCrunchbase() + extractCrunchbaseResults/Profile
 │   └── utils/
 │       ├── browser.ts    # launchStealthBrowser() + setProxies() + rotation
-│       └── throttle.ts   # randomDelay(), withRateLimit()
+│       └── throttle.ts   # randomDelay(), withRateLimit() (now with presets + backoff)
 ├── tests/
 │   └── scrapers.test.ts  # Vitest mocks + fixture tests for parsers, dedup, export, sheets
 ├── playwright.config.ts  # Headless config, user-agent, timeouts
@@ -470,7 +475,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit`), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, the interactive wizard, and `processWithConcurrency` (respects concurrency limit and calls rate limiter).
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit` with presets and backoff), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, the interactive wizard, and `processWithConcurrency` (respects concurrency limit and calls rate limiter).
 
 ## 📍 Roadmap
 
@@ -487,7 +492,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] HTML report generator with embedded map previews
 - [x] Docker image with bundled Chromium for server use
 - [x] CRM import templates (HubSpot CSV, Salesforce)
-- [ ] Rate-limit presets per source with exponential backoff
+- [x] Rate-limit presets per source with exponential backoff
 
 > 🤖 This roadmap is worked through continuously — ideas and PRs welcome!
 <!-- roadmap:end -->

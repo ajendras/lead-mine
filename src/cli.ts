@@ -33,6 +33,7 @@ Examples:
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --concurrency=4
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --output=leads.hubspot.csv --enrich
   $ lead-mine scrape --category="roofers" --location="Austin, TX" --output=accounts.salesforce.csv --enrich --use-llm-scoring
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --rpm=8
     `
   );
 
@@ -85,6 +86,7 @@ program
       .argParser((val) => parseInt(val, 10))
       .default(3)
   )
+  .option('--rpm <number>', 'Override requests per minute (polite per-source presets used if omitted; exponential backoff applied on rate limits/blocks)')
   .action(async (cmdOptions) => {
     try {
       const config = await leadMine.loadConfig();
@@ -99,6 +101,14 @@ program
         program.error('Concurrency must be an integer between 1 and 6.');
       }
 
+      let rpm: number | undefined;
+      if (cmdOptions.rpm !== undefined) {
+        rpm = parseInt(cmdOptions.rpm, 10);
+        if (Number.isNaN(rpm) || rpm < 1 || rpm > 60) {
+          program.error('rpm must be an integer between 1 and 60.');
+        }
+      }
+
       const source = cmdOptions.source as ScrapeSource;
       const outputPath = cmdOptions.output;
       const query = cmdOptions.query || cmdOptions.category;
@@ -111,6 +121,7 @@ program
         useLLMScoring: cmdOptions.useLlmScoring,
         ollamaModel: cmdOptions.ollamaModel,
         concurrency,
+        rpm,
       };
 
       if (cmdOptions.verifyEmails !== undefined) {
@@ -227,6 +238,25 @@ program
       if (Number.isNaN(limit) || limit < 5) limit = 25;
       if (limit > 100) limit = 100;
 
+      let rpm = 20;
+      switch (source) {
+        case 'maps':
+          rpm = 6;
+          break;
+        case 'search':
+          rpm = 10;
+          break;
+        case 'yelp':
+          rpm = 15;
+          break;
+        case 'yellowpages':
+          rpm = 25;
+          break;
+        case 'crunchbase':
+          rpm = 12;
+          break;
+      }
+
       const config: Partial<ScrapeOptions> = {
         source,
         category: category.trim(),
@@ -237,7 +267,7 @@ program
         useLLMScoring,
         ollamaModel: 'llama3.1',
         headless: true,
-        rpm: 15,
+        rpm,
         minRating: 4.0,
         concurrency: 3,
       };

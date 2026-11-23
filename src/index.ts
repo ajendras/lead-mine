@@ -8,13 +8,13 @@ import { scrapeCrunchbase as scrapeCrunchbaseImpl } from './scrapers/crunchbase.
 import { enrichLead } from './enricher.js';
 import { scoreLeadWithOllama } from './enricher.js';
 import { exportLeads, exportToSheets as exportToSheetsImpl } from './exporter.js';
-import type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions } from './types.js';
-import { ScrapeOptionsSchema } from './types.js';
+import type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions, RateLimitOptions } from './types.js';
+import { ScrapeOptionsSchema, RATE_LIMIT_PRESETS } from './types.js';
 import { randomDelay, withRateLimit } from './utils/throttle.js';
 
 export { CONFIG_PATH };
-export type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions };
-export { withRateLimit, scoreLeadWithOllama };
+export type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions, RateLimitOptions };
+export { withRateLimit, scoreLeadWithOllama, RATE_LIMIT_PRESETS };
 
 /**
  * Loads and merges user configuration (~/.leadmine/config.json).
@@ -52,17 +52,18 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
 
 /**
  * Processes an array of items with bounded concurrency and rate limiting.
- * Uses withRateLimit (now generic) and batches for controlled parallel execution.
+ * Uses per-source presets (see RATE_LIMIT_PRESETS) and exponential backoff
+ * when rate-limit or block errors are detected.
  */
 export async function processWithConcurrency<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
   concurrency: number = 3,
-  rpm: number = 20
+  rateLimit: RateLimitOptions = 20
 ): Promise<R[]> {
   if (!items.length) return [];
 
-  const rateLimitedProcessor = withRateLimit(processor, rpm);
+  const rateLimitedProcessor = withRateLimit(processor, rateLimit);
   const results: R[] = [];
   const limit = Math.max(1, Math.min(concurrency, 6));
 
@@ -104,13 +105,17 @@ export async function scrapeMaps(
     leads = leads.filter((l: Lead) => !l.rating || l.rating >= opts.minRating!);
   }
 
+  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
+    ? options.rpm 
+    : { source: opts.source };
+
   if (opts.enrich) {
     console.log(`🔧 Enriching ${leads.length} leads (concurrency=${opts.concurrency})...`);
     leads = await processWithConcurrency(
       leads,
       (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -120,7 +125,7 @@ export async function scrapeMaps(
       leads,
       (lead: Lead) => scoreLeadWithOllama(lead, opts.category!, opts.ollamaModel),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -145,12 +150,16 @@ export async function scrapeSearch(
 
   leads = deduplicateLeads(leads);
 
+  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
+    ? options.rpm 
+    : { source: opts.source };
+
   if (opts.enrich !== false) {
     leads = await processWithConcurrency(
       leads,
       (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -159,7 +168,7 @@ export async function scrapeSearch(
       leads,
       (lead: Lead) => scoreLeadWithOllama(lead, opts.category || query, opts.ollamaModel),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -186,12 +195,16 @@ export async function scrapeYelp(
 
   leads = deduplicateLeads(leads);
 
+  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
+    ? options.rpm 
+    : { source: opts.source };
+
   if (opts.enrich !== false) {
     leads = await processWithConcurrency(
       leads,
       (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -200,7 +213,7 @@ export async function scrapeYelp(
       leads,
       (lead: Lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -227,12 +240,16 @@ export async function scrapeYellowPages(
 
   leads = deduplicateLeads(leads);
 
+  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
+    ? options.rpm 
+    : { source: opts.source };
+
   if (opts.enrich) {
     leads = await processWithConcurrency(
       leads,
       (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -241,7 +258,7 @@ export async function scrapeYellowPages(
       leads,
       (lead: Lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -266,12 +283,16 @@ export async function scrapeCrunchbase(
 
   leads = deduplicateLeads(leads);
 
+  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
+    ? options.rpm 
+    : { source: opts.source };
+
   if (opts.enrich) {
     leads = await processWithConcurrency(
       leads,
       (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
@@ -280,7 +301,7 @@ export async function scrapeCrunchbase(
       leads,
       (lead: Lead) => scoreLeadWithOllama(lead, query, opts.ollamaModel),
       opts.concurrency,
-      opts.rpm
+      rateLimitOpts
     );
   }
 
