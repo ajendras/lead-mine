@@ -190,10 +190,7 @@ export async function scrapeYelp(
   }) as ScrapeOptions;
   console.log(`📍 Scraping Yelp for "${category}" near "${location}"...`);
 
-  let leads = await scrapeYelpImpl(category, location, {
-    ...opts,
-    enrich: opts.enrich !== undefined ? opts.enrich : false,
-  });
+  let leads = await scrapeYelpImpl(category, location, opts.limit);
 
   leads = deduplicateLeads(leads);
 
