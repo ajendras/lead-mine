@@ -1,7 +1,6 @@
-import { z } from 'zod';
 import { loadConfig as loadConfigFromFile, saveConfig as saveConfigToFile, CONFIG_PATH } from './config.js';
-import { scrapeMaps as scrapeMapsImpl } from './scrapers/maps.js';
-import { scrapeSearch as scrapeSearchImpl } from './scrapers/search.js';
+import { scrapeGoogleMaps as scrapeMapsImpl } from './scrapers/maps.js';
+import { scrapeGoogleSearch as scrapeSearchImpl } from './scrapers/search.js';
 import { scrapeYelp as scrapeYelpImpl } from './scrapers/yelp.js';
 import { scrapeYellowPages as scrapeYellowPagesImpl } from './scrapers/yellowpages.js';
 import { scrapeCrunchbase as scrapeCrunchbaseImpl } from './scrapers/crunchbase.js';
@@ -98,7 +97,7 @@ export async function scrapeMaps(
   }) as ScrapeOptions;
   console.log(`🗺️ Scraping Google Maps for "${category}" in "${location}"...`);
 
-  let leads = await scrapeMapsImpl(category, location, opts);
+  let leads = await scrapeMapsImpl(category, location, opts.limit);
 
   leads = deduplicateLeads(leads);
   if (opts.minRating !== undefined) {
@@ -146,7 +145,7 @@ export async function scrapeSearch(
   }) as ScrapeOptions;
   console.log(`🔎 Searching Google for "${query}"...`);
 
-  let leads = await scrapeSearchImpl(query, opts);
+  let leads = await scrapeSearchImpl(query, opts.limit);
 
   leads = deduplicateLeads(leads);
 
@@ -191,7 +190,10 @@ export async function scrapeYelp(
   }) as ScrapeOptions;
   console.log(`📍 Scraping Yelp for "${category}" near "${location}"...`);
 
-  let leads = await scrapeYelpImpl(category, location, opts);
+  let leads = await scrapeYelpImpl(category, location, {
+    ...opts,
+    enrich: opts.enrich !== undefined ? opts.enrich : false,
+  });
 
   leads = deduplicateLeads(leads);
 
@@ -236,7 +238,7 @@ export async function scrapeYellowPages(
   }) as ScrapeOptions;
   console.log(`🟨 Scraping YellowPages for "${category}" in "${location}"...`);
 
-  let leads = await scrapeYellowPagesImpl(category, location, opts);
+  let leads = await scrapeYellowPagesImpl(category, location, opts.limit);
 
   leads = deduplicateLeads(leads);
 
@@ -279,7 +281,7 @@ export async function scrapeCrunchbase(
   }) as ScrapeOptions;
   console.log(`💼 Scraping Crunchbase for "${query}"...`);
 
-  let leads = await scrapeCrunchbaseImpl(query, opts);
+  let leads = await scrapeCrunchbaseImpl(query, opts.limit);
 
   leads = deduplicateLeads(leads);
 
