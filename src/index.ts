@@ -13,8 +13,8 @@ import { ScrapeOptionsSchema } from './types.js';
 import { randomDelay, withRateLimit } from './utils/throttle.js';
 
 export { CONFIG_PATH };
-export type { Lead, ScrapeSource, ExportFormat };
-export { loadConfig, saveConfig, scrapeMaps, scrapeSearch, scrapeYelp, scrapeYellowPages, scrapeCrunchbase, saveLeads, exportToSheets, scoreLeadWithOllama, withRateLimit, processWithConcurrency };
+export type { Lead, ScrapeOptions, ScrapeSource, ExportFormat, GoogleSheetsOptions };
+export { withRateLimit, scoreLeadWithOllama };
 
 /**
  * Loads and merges user configuration (~/.leadmine/config.json).
@@ -89,21 +89,26 @@ export async function scrapeMaps(
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ ...options, source: 'maps', category, location });
+  const opts = ScrapeOptionsSchema.parse({ 
+    ...options, 
+    source: 'maps', 
+    category, 
+    location 
+  }) as ScrapeOptions;
   console.log(`🗺️ Scraping Google Maps for "${category}" in "${location}"...`);
 
   let leads = await scrapeMapsImpl(category, location, opts);
 
   leads = deduplicateLeads(leads);
   if (opts.minRating !== undefined) {
-    leads = leads.filter((l) => !l.rating || l.rating >= opts.minRating!);
+    leads = leads.filter((l: Lead) => !l.rating || l.rating >= opts.minRating!);
   }
 
   if (opts.enrich) {
     console.log(`🔧 Enriching ${leads.length} leads (concurrency=${opts.concurrency})...`);
     leads = await processWithConcurrency(
       leads,
-      (lead) => enrichLead(lead, opts.verifyEmails),
+      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
       opts.rpm
     );
@@ -113,7 +118,7 @@ export async function scrapeMaps(
     console.log(`🧠 Scoring leads with Ollama (${opts.ollamaModel})...`);
     leads = await processWithConcurrency(
       leads,
-      (lead) => scoreLeadWithOllama(lead, opts.category!, opts.ollamaModel),
+      (lead: Lead) => scoreLeadWithOllama(lead, opts.category!, opts.ollamaModel),
       opts.concurrency,
       opts.rpm
     );
@@ -129,7 +134,11 @@ export async function scrapeSearch(
   query: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ ...options, source: 'search', query });
+  const opts = ScrapeOptionsSchema.parse({ 
+    ...options, 
+    source: 'search', 
+    query 
+  }) as ScrapeOptions;
   console.log(`🔎 Searching Google for "${query}"...`);
 
   let leads = await scrapeSearchImpl(query, opts);
@@ -139,7 +148,7 @@ export async function scrapeSearch(
   if (opts.enrich !== false) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => enrichLead(lead, opts.verifyEmails),
+      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
       opts.rpm
     );
@@ -148,7 +157,7 @@ export async function scrapeSearch(
   if (opts.useLLMScoring) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => scoreLeadWithOllama(lead, opts.category || query, opts.ollamaModel),
+      (lead: Lead) => scoreLeadWithOllama(lead, opts.category || query, opts.ollamaModel),
       opts.concurrency,
       opts.rpm
     );
@@ -165,7 +174,12 @@ export async function scrapeYelp(
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ ...options, source: 'yelp', category, location });
+  const opts = ScrapeOptionsSchema.parse({ 
+    ...options, 
+    source: 'yelp', 
+    category, 
+    location 
+  }) as ScrapeOptions;
   console.log(`📍 Scraping Yelp for "${category}" near "${location}"...`);
 
   let leads = await scrapeYelpImpl(category, location, opts);
@@ -175,7 +189,7 @@ export async function scrapeYelp(
   if (opts.enrich !== false) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => enrichLead(lead, opts.verifyEmails),
+      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
       opts.rpm
     );
@@ -184,7 +198,7 @@ export async function scrapeYelp(
   if (opts.useLLMScoring) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
+      (lead: Lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
       opts.concurrency,
       opts.rpm
     );
@@ -201,7 +215,12 @@ export async function scrapeYellowPages(
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ ...options, source: 'yellowpages', category, location });
+  const opts = ScrapeOptionsSchema.parse({ 
+    ...options, 
+    source: 'yellowpages', 
+    category, 
+    location 
+  }) as ScrapeOptions;
   console.log(`🟨 Scraping YellowPages for "${category}" in "${location}"...`);
 
   let leads = await scrapeYellowPagesImpl(category, location, opts);
@@ -211,7 +230,7 @@ export async function scrapeYellowPages(
   if (opts.enrich) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => enrichLead(lead, opts.verifyEmails),
+      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
       opts.rpm
     );
@@ -220,7 +239,7 @@ export async function scrapeYellowPages(
   if (opts.useLLMScoring) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
+      (lead: Lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
       opts.concurrency,
       opts.rpm
     );
@@ -236,7 +255,11 @@ export async function scrapeCrunchbase(
   query: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ ...options, source: 'crunchbase', query });
+  const opts = ScrapeOptionsSchema.parse({ 
+    ...options, 
+    source: 'crunchbase', 
+    query 
+  }) as ScrapeOptions;
   console.log(`💼 Scraping Crunchbase for "${query}"...`);
 
   let leads = await scrapeCrunchbaseImpl(query, opts);
@@ -246,7 +269,7 @@ export async function scrapeCrunchbase(
   if (opts.enrich) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => enrichLead(lead, opts.verifyEmails),
+      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
       opts.concurrency,
       opts.rpm
     );
@@ -255,7 +278,7 @@ export async function scrapeCrunchbase(
   if (opts.useLLMScoring) {
     leads = await processWithConcurrency(
       leads,
-      (lead) => scoreLeadWithOllama(lead, query, opts.ollamaModel),
+      (lead: Lead) => scoreLeadWithOllama(lead, query, opts.ollamaModel),
       opts.concurrency,
       opts.rpm
     );
