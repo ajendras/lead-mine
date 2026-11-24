@@ -34,6 +34,7 @@ Examples:
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --output=leads.hubspot.csv --enrich
   $ lead-mine scrape --category="roofers" --location="Austin, TX" --output=accounts.salesforce.csv --enrich --use-llm-scoring
   $ lead-mine scrape --category="plumbers" --location="Portland, OR" --rpm=8
+  $ lead-mine scrape --category="plumbers" --location="Portland, OR" --output=leads.csv --append
     `
   );
 
@@ -87,6 +88,7 @@ program
       .default(3)
   )
   .option('--rpm <number>', 'Override requests per minute (polite per-source presets used if omitted; exponential backoff applied on rate limits/blocks)')
+  .option('--append', 'Append to existing CSV/JSON file instead of overwriting (CSV/JSON only)')
   .action(async (cmdOptions) => {
     try {
       const config = await leadMine.loadConfig();
@@ -122,6 +124,7 @@ program
         ollamaModel: cmdOptions.ollamaModel,
         concurrency,
         rpm,
+        append: cmdOptions.append,
       };
 
       if (cmdOptions.verifyEmails !== undefined) {
@@ -176,7 +179,7 @@ program
         const sheetOpts = { ...(scrapeOpts.googleSheets || {}), spreadsheetId: sheetId };
         await leadMine.exportToSheets(leads, sheetId, sheetOpts);
       } else {
-        await leadMine.saveLeads(leads, outputPath);
+        await leadMine.saveLeads(leads, outputPath, scrapeOpts.append);
       }
       console.log(`\n🎉 Done. Captured ${leads.length} high-quality leads.`);
     } catch (error) {

@@ -309,8 +309,11 @@ export async function scrapeCrunchbase(
 
 /**
  * Saves leads to disk; format is inferred from file extension or name.
+ * If append=true and the file exists, CSV and JSON will be appended to
+ * (CSV skips header on append; JSON concatenates the arrays). Other formats
+ * always overwrite.
  */
-export async function saveLeads(leads: Lead[], filepath: string = 'leads.csv'): Promise<void> {
+export async function saveLeads(leads: Lead[], filepath: string = 'leads.csv', append: boolean = false): Promise<void> {
   if (!Array.isArray(leads) || leads.length === 0) {
     throw new Error('Cannot save: leads array must be non-empty');
   }
@@ -322,7 +325,7 @@ export async function saveLeads(leads: Lead[], filepath: string = 'leads.csv'): 
   else if (lower.includes('hubspot')) format = 'hubspot';
   else if (lower.includes('salesforce')) format = 'salesforce';
 
-  await exportLeads(leads, format, filepath);
+  await exportLeads(leads, format, filepath, append);
 }
 
 /**

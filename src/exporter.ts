@@ -16,15 +16,22 @@ import type { Lead, ExportFormat, GoogleSheetsOptions } from './types.js';
  * 'hubspot' and 'salesforce' formats produce CRM-ready CSVs with address
  * component parsing.
  *
+ * For CSV and JSON, the append flag (default false) will add records to an
+ * existing file instead of overwriting it. CSV uses the csv-writer append
+ * option (no duplicate header). JSON reads an existing array (if present),
+ * concatenates, and writes the combined array.
+ *
  * @param leads - Array of leads to export (must be non-empty)
  * @param format - Explicit format (csv | json | xlsx | html | hubspot | salesforce)
  * @param filepath - Destination path on disk
+ * @param append - If true, append to CSV/JSON instead of overwriting (default: false)
  * @throws {Error} With a clear message when validation or I/O fails
  */
 export async function exportLeads(
   leads: Lead[],
   format: ExportFormat,
-  filepath: string
+  filepath: string,
+  append: boolean = false
 ): Promise<void> {
   if (!Array.isArray(leads) || leads.length === 0) {
     throw new Error('Cannot export: leads array must be non-empty.');
@@ -94,14 +101,30 @@ export async function exportLeads(
         const csvWriter = createObjectCsvWriter({
           path: filepath,
           header: headers,
+          append: !!append,
         });
         await csvWriter.writeRecords(normalized);
         break;
       }
 
-      case 'json':
-        await fs.writeFile(filepath, JSON.stringify(leads, null, 2), 'utf8');
+      case 'json': {
+        let content = leads;
+        if (append) {
+          try {
+            const existingText = await fs.readFile(filepath, 'utf8');
+            const existing = JSON.parse(existingText || '[]');
+            const existingLeads: Lead[] = Array.isArray(existing) ? existing : [];
+            content = [...existingLeads, ...leads];
+          } catch (err: any) {
+            if (err.code !== 'ENOENT') {
+              console.warn(`⚠️ Could not read existing JSON for append: ${err.message}. Overwriting.`);
+            }
+            content = leads;
+          }
+        }
+        await fs.writeFile(filepath, JSON.stringify(content, null, 2), 'utf8');
         break;
+      }
 
       case 'xlsx': {
         const worksheet = XLSX.utils.json_to_sheet(normalized);

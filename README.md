@@ -58,7 +58,7 @@ Additional US directory and startup ecosystem sources with profile enrichment
 <tr>
 <td>
 📤 <b>Smart Export</b><br>
-Writes clean CSV, JSON or XLSX with configurable columns and deduplication
+Writes clean CSV, JSON or XLSX with configurable columns, deduplication and --append support for CSV/JSON
 </td>
 <td>
 🔧 <b>Contact Enricher</b><br>
@@ -281,6 +281,12 @@ Rate-limit override (uses preset for source otherwise):
 lead-mine scrape --category="plumbers" --location="Portland, OR" --rpm=8
 ```
 
+**Append mode (CSV/JSON only)**
+
+```bash
+lead-mine scrape --category="plumbers" --location="Portland, OR" --output=leads.csv --append
+```
+
 **Docker usage** (see Docker section above for full details):
 
 ```bash
@@ -309,7 +315,9 @@ const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
   concurrency: 3,
 });
 
-await saveLeads(leads, 'coffee-leads.xlsx');
+await saveLeads(leads, 'coffee-leads.csv');
+// append example:
+await saveLeads(leads, 'coffee-leads.csv', true);
 // or
 // await exportToSheets(leads, 'your-spreadsheet-id-here', { sheetName: 'PortlandLeads' });
 console.log(`Captured ${leads.length} leads`);
@@ -402,6 +410,7 @@ Example `~/.leadmine/config.json`:
 | googleSheets.sheetName | Leads | Target sheet/tab name inside the spreadsheet |
 | googleSheets.serviceAccountKeyPath | ~/.leadmine/service-account.json | Path to service account JSON key file |
 | concurrency | 3             | Max parallel operations for enrichment/scoring (used by `processWithConcurrency`) |
+| append      | false         | Append leads to existing CSV/JSON file (instead of overwriting). Other formats always overwrite. |
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
 
@@ -475,7 +484,7 @@ flowchart TD
 npm test
 ```
 
-Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit` with presets and backoff), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, the interactive wizard, and `processWithConcurrency` (respects concurrency limit and calls rate limiter).
+Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixtures, `Lead` shape validation, deduplication logic, enrichment fallbacks, throttle utilities (`randomDelay`, `withRateLimit` with presets and backoff), export formats (CSV/JSON/XLSX), the new `exportToSheets()` path (including error cases for missing service account key), CLI option parsing, the `loadConfig()`/`saveConfig()` helpers, new proxy rotation behaviour, the YellowPages/Crunchbase parsers, the new disposable email verification logic, local LLM scoring with mocked Ollama responses, the interactive wizard, `processWithConcurrency` (respects concurrency limit and calls rate limiter), and append mode for CSV/JSON.
 
 ## 📍 Roadmap
 
@@ -493,6 +502,14 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Docker image with bundled Chromium for server use
 - [x] CRM import templates (HubSpot CSV, Salesforce)
 - [x] Rate-limit presets per source with exponential backoff
+- [x] Add --append flag to saveLeads() allowing CSV/JSON append instead of overwrite
+- [ ] Implement configurable minScore threshold in ScrapeOptions to filter LLM-scored leads
+- [ ] Add actionable troubleshooting suggestions to CLI error output (blocks, missing Ollama, proxy failures)
+- [ ] Expand scrapers.test.ts with mocked end-to-end tests for wizard + config roundtrip
+- [ ] Document scraper extension pattern and template in CONTRIBUTING.md with new source checklist
+- [ ] Support loading proxy list from text file (--proxy-file) in config.ts and browser utils
+- [ ] Add --dry-run mode that prints planned queries, limits and estimated cost without launching browsers
+- [ ] Update Docker image with multi-stage build and non-root user for smaller size and security
 
 > 🤖 This roadmap is worked through continuously — ideas and PRs welcome!
 <!-- roadmap:end -->
