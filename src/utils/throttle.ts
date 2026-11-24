@@ -1,9 +1,11 @@
-import type { ScrapeSource } from '../types.js';
-import { RATE_LIMIT_PRESETS, type RateLimitOptions } from '../types.js';
+import type { RateLimitOptions, ScrapeSource } from '../types.js';
+
+const lastCallTimes = new Map<string, number>();
+const backoffDelays = new Map<string, number>();
 
 /**
- * Returns a random delay (in ms) between minMs and maxMs.
- * Used for polite jitter between requests.
+ * Returns a random delay between minMs and maxMs (inclusive).
+ * Used to add jitter between requests and appear more human-like.
  */
 export async function randomDelay(minMs = 800, maxMs = 2200): Promise<void> {
   const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
@@ -11,91 +13,59 @@ export async function randomDelay(minMs = 800, maxMs = 2200): Promise<void> {
 }
 
 /**
- * Wraps an async processor with per-source rate limiting and exponential
- * backoff on rate-limit/block errors (429, 403, timeout, etc.).
+ * Wraps an async function with per-source rate limiting.
  *
- * Uses RATE_LIMIT_PRESETS when a source is supplied; falls back to
- * sensible defaults. Backoff is tracked per wrapper instance.
+ * Accepts a number (treated as RPM) or a RateLimitOptions object.
+ * Enforces RPM-based minimum interval between calls.
+ * On 429 / rate-limit errors applies exponential backoff using backoffFactor
+ * (capped by maxDelayMs). Retries once after backoff. State is kept in memory
+ * for the lifetime of the process.
  */
-export function withRateLimit<T, R>(
-  processor: (item: T) => Promise<R>,
-  rateLimit: RateLimitOptions = 20
-): (item: T) => Promise<R> {
-  const opts = typeof rateLimit === 'number'
-    ? {
-        rpm: rateLimit,
-        source: 'maps' as ScrapeSource,
-        backoffFactor: 1.8,
-        maxDelayMs: 30000,
-      }
-    : {
-        rpm:
-          rateLimit.rpm ??
-          (rateLimit.source && RATE_LIMIT_PRESETS[rateLimit.source]
-            ? RATE_LIMIT_PRESETS[rateLimit.source].rpm
-            : 20),
-        source: rateLimit.source ?? 'maps',
-        backoffFactor:
-          rateLimit.backoffFactor ??
-          (rateLimit.source && RATE_LIMIT_PRESETS[rateLimit.source]
-            ? RATE_LIMIT_PRESETS[rateLimit.source].backoffFactor
-            : 1.8),
-        maxDelayMs:
-          rateLimit.maxDelayMs ??
-          (rateLimit.source && RATE_LIMIT_PRESETS[rateLimit.source]
-            ? RATE_LIMIT_PRESETS[rateLimit.source].maxDelayMs
-            : 30000),
-      };
+export async function withRateLimit<T>(
+  fn: () => Promise<T>,
+  options: RateLimitOptions = 20
+): Promise<T> {
+  const opts = typeof options === 'number' ? { rpm: options } : options;
+  const rpm = opts.rpm ?? 20;
+  const backoffFactor = opts.backoffFactor ?? 1.5;
+  const maxDelayMs = opts.maxDelayMs ?? 45000;
+  const source = opts.source ?? ('default' as ScrapeSource);
 
-  const baseDelayMs = Math.floor(60000 / opts.rpm);
-  let currentDelayMs = baseDelayMs;
-  let lastCallMs = 0;
+  const key = `rl-${source}`;
+  const intervalMs = Math.ceil(60000 / rpm);
+  const now = Date.now();
+  const last = lastCallTimes.get(key) ?? 0;
 
-  return async (item: T): Promise<R> => {
-    const now = Date.now();
-    const timeSinceLast = now - lastCallMs;
-    let waitMs = baseDelayMs - timeSinceLast;
+  if (now - last < intervalMs) {
+    await new Promise((r) => setTimeout(r, intervalMs - (now - last)));
+  }
+  lastCallTimes.set(key, Date.now());
 
-    if (waitMs > 0) {
-      await randomDelay(waitMs, waitMs + 420);
-    } else if (currentDelayMs > baseDelayMs) {
-      // still apply light jitter when recovering from backoff
-      await randomDelay(420, 920);
+  try {
+    const result = await fn();
+    backoffDelays.delete(key);
+    return result;
+  } catch (err: any) {
+    const message = (err?.message || '').toLowerCase();
+    const isRateLimited =
+      err?.status === 429 ||
+      err?.response?.status === 429 ||
+      message.includes('429') ||
+      message.includes('rate limit') ||
+      message.includes('too many requests');
+
+    if (isRateLimited) {
+      let delay = backoffDelays.get(key) ?? intervalMs;
+      delay = Math.min(Math.floor(delay * backoffFactor), maxDelayMs);
+      backoffDelays.set(key, delay);
+
+      console.warn(`🚦 Rate limit hit for ${source}. Backing off ${delay}ms (factor ${backoffFactor})...`);
+
+      await new Promise((r) => setTimeout(r, delay));
+      lastCallTimes.set(key, Date.now());
+      return await fn();
     }
 
-    lastCallMs = Date.now();
-
-    try {
-      const result = await processor(item);
-
-      // success: gradually recover from any previous backoff
-      if (currentDelayMs > baseDelayMs) {
-        currentDelayMs = Math.max(baseDelayMs, Math.floor(currentDelayMs / 1.35));
-      }
-
-      return result;
-    } catch (err: any) {
-      const message = (err?.message || '').toLowerCase();
-      if (
-        message.includes('429') ||
-        message.includes('rate limit') ||
-        message.includes('blocked') ||
-        message.includes('403') ||
-        message.includes('timeout')
-      ) {
-        currentDelayMs = Math.min(
-          opts.maxDelayMs,
-          Math.floor(currentDelayMs * opts.backoffFactor)
-        );
-        console.warn(
-          `🚦 ${opts.source} rate limit / block detected – backing off to ~${currentDelayMs}ms`
-        );
-        await randomDelay(
-          Math.floor(currentDelayMs * 0.7),
-          Math.floor(currentDelayMs * 1.4)
-        );
-      }
-      throw err;
-    }
-  };
+    throw err;
+  }
 }

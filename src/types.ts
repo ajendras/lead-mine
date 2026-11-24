@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-export type ScrapeSource = 'maps' | 'search' | 'yelp' | 'yellowpages' | 'crunchbase';
-
 export interface Lead {
   name: string;
   website?: string;
@@ -15,8 +13,9 @@ export interface Lead {
   scoringNotes?: string;
   emailVerified?: boolean;
   scrapedAt?: string;
-  source?: ScrapeSource;
 }
+
+export type ScrapeSource = 'maps' | 'search' | 'yelp' | 'yellowpages' | 'crunchbase';
 
 export interface GoogleSheetsOptions {
   spreadsheetId?: string;
@@ -24,27 +23,14 @@ export interface GoogleSheetsOptions {
   serviceAccountKeyPath?: string;
 }
 
-export interface ScrapeOptions {
-  source?: ScrapeSource;
-  category?: string;
-  location?: string;
-  query?: string;
-  limit?: number;
-  enrich?: boolean;
-  verifyEmails?: boolean;
-  useLLMScoring?: boolean;
-  ollamaModel?: string;
-  headless?: boolean;
-  rpm?: number;
-  minRating?: number;
-  userAgent?: string;
-  proxy?: string | string[];
-  googleSheets?: GoogleSheetsOptions;
-  concurrency?: number;
-  append?: boolean;
-}
-
 export type ExportFormat = 'csv' | 'json' | 'xlsx' | 'html' | 'hubspot' | 'salesforce';
+
+export type RateLimitOptions = number | {
+  rpm?: number;
+  backoffFactor?: number;
+  maxDelayMs?: number;
+  source?: ScrapeSource;
+};
 
 export const RATE_LIMIT_PRESETS = {
   maps: { rpm: 6 },
@@ -54,33 +40,28 @@ export const RATE_LIMIT_PRESETS = {
   crunchbase: { rpm: 12 },
 } as const;
 
-export type RateLimitOptions = {
-  rpm?: number;
-  source?: ScrapeSource;
-};
-
-export const ScrapeOptionsSchema = z.object({
-  source: z.enum(['maps', 'search', 'yelp', 'yellowpages', 'crunchbase']).optional(),
+const ScrapeOptionsSchema = z.object({
+  source: z.enum(['maps', 'search', 'yelp', 'yellowpages', 'crunchbase']).optional().default('maps'),
   category: z.string().optional(),
   location: z.string().optional(),
   query: z.string().optional(),
-  limit: z.number().int().min(1).max(100).optional(),
-  enrich: z.boolean().optional(),
-  verifyEmails: z.boolean().optional(),
-  useLLMScoring: z.boolean().optional(),
-  ollamaModel: z.string().optional(),
-  headless: z.boolean().optional(),
-  rpm: z.number().int().min(1).max(60).optional(),
+  limit: z.number().int().positive().default(20),
+  enrich: z.boolean().default(true),
+  verifyEmails: z.boolean().default(false),
+  useLLMScoring: z.boolean().default(false),
+  ollamaModel: z.string().default('llama3.1'),
+  headless: z.boolean().default(true),
   minRating: z.number().min(0).max(5).optional(),
-  userAgent: z.string().optional(),
+  rpm: z.number().int().positive().optional(),
   proxy: z.union([z.string(), z.array(z.string())]).optional(),
-  googleSheets: z
-    .object({
-      spreadsheetId: z.string().optional(),
-      sheetName: z.string().optional(),
-      serviceAccountKeyPath: z.string().optional(),
-    })
-    .optional(),
-  concurrency: z.number().int().min(1).max(6).optional(),
-  append: z.boolean().optional(),
+  concurrency: z.number().int().min(1).max(6).default(3),
+  googleSheets: z.object({
+    spreadsheetId: z.string().optional(),
+    sheetName: z.string().optional(),
+    serviceAccountKeyPath: z.string().optional(),
+  }).optional(),
+  append: z.boolean().default(false),
 }).passthrough();
+
+export { ScrapeOptionsSchema };
+export type ScrapeOptions = z.infer<typeof ScrapeOptionsSchema>;

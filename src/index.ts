@@ -30,7 +30,7 @@ export async function saveConfig(config: Partial<ScrapeOptions>, configPath: str
 }
 
 /**
- * Removes duplicate leads using a composite key (name + website + address).
+ * Removes duplicate leads using a composite key (name + address + website).
  */
 function deduplicateLeads(leads: Lead[]): Lead[] {
   const seen = new Set<string>();
@@ -38,8 +38,8 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
   for (const lead of leads) {
     const key = [
       (lead.name || '').toLowerCase().trim(),
-      lead.website || '',
       (lead.address || '').toLowerCase().trim(),
+      (lead.website || '').toLowerCase().trim(),
     ].join('|');
     if (!seen.has(key)) {
       seen.add(key);
@@ -50,272 +50,154 @@ function deduplicateLeads(leads: Lead[]): Lead[] {
 }
 
 /**
- * Processes an array of items with bounded concurrency and rate limiting.
- * Uses per-source presets (see RATE_LIMIT_PRESETS) and exponential backoff
- * when rate-limit or block errors are detected.
+ * Processes items with limited concurrency. Optionally wraps each processor
+ * call with withRateLimit when rateLimitOpts is supplied.
  */
 export async function processWithConcurrency<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
   concurrency: number = 3,
-  rateLimit: RateLimitOptions = 20
+  rateLimitOpts?: RateLimitOptions
 ): Promise<R[]> {
-  if (!items.length) return [];
-
-  const rateLimitedProcessor = withRateLimit(processor, rateLimit);
   const results: R[] = [];
-  const limit = Math.max(1, Math.min(concurrency, 6));
-
-  for (let i = 0; i < items.length; i += limit) {
-    const batch = items.slice(i, i + limit);
-    const batchResults = await Promise.all(
-      batch.map((item) => rateLimitedProcessor(item))
-    );
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const promises = batch.map((item) => {
+      const task = () => processor(item);
+      return rateLimitOpts ? withRateLimit(task, rateLimitOpts) : task();
+    });
+    const batchResults = await Promise.all(promises);
     results.push(...batchResults);
-
-    if (i + limit < items.length) {
+    if (i + concurrency < items.length) {
       await randomDelay(350, 750);
     }
   }
-
   return results;
 }
 
-/**
- * Scrape Google Maps with post-processing (dedup, enrich, score).
- */
+async function applyPostProcessing(leads: Lead[], opts: ScrapeOptions): Promise<Lead[]> {
+  let processed = leads;
+
+  if (opts.enrich !== false) {
+    processed = await processWithConcurrency(
+      processed,
+      (lead) => enrichLead(lead, !!opts.verifyEmails),
+      opts.concurrency ?? 3,
+      { source: 'enrich' as ScrapeSource, rpm: 8 }
+    );
+  }
+
+  if (opts.useLLMScoring && opts.category) {
+    processed = await processWithConcurrency(
+      processed,
+      (lead) => scoreLeadWithOllama(lead, opts.category!, opts.ollamaModel),
+      2,
+      { source: 'llm' as ScrapeSource, rpm: 6 }
+    );
+  }
+
+  return processed;
+}
+
 export async function scrapeMaps(
   category: string,
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ 
-    ...options, 
-    source: 'maps', 
-    category, 
-    location 
-  }) as ScrapeOptions;
-  console.log(`🗺️ Scraping Google Maps for "${category}" in "${location}"...`);
+  const merged = { source: 'maps' as const, ...options, category, location };
+  const opts = ScrapeOptionsSchema.parse(merged) as ScrapeOptions;
+  const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'maps' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.maps.rpm };
 
-  let leads = await scrapeMapsImpl(category, location, opts.limit);
-
+  const raw = await withRateLimit(
+    () => scrapeMapsImpl(category, location, opts),
+    rateOpts
+  );
+  let leads = await applyPostProcessing(raw, opts);
   leads = deduplicateLeads(leads);
-  if (opts.minRating !== undefined) {
-    leads = leads.filter((l: Lead) => !l.rating || l.rating >= opts.minRating!);
-  }
-
-  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
-    ? options.rpm 
-    : { source: opts.source };
-
-  if (opts.enrich) {
-    console.log(`🔧 Enriching ${leads.length} leads (concurrency=${opts.concurrency})...`);
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  if (opts.useLLMScoring && opts.category) {
-    console.log(`🧠 Scoring leads with Ollama (${opts.ollamaModel})...`);
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => scoreLeadWithOllama(lead, opts.category!, opts.ollamaModel),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  return leads;
+  return leads.slice(0, opts.limit);
 }
 
-/**
- * Scrape organic Google search results.
- */
 export async function scrapeSearch(
   query: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ 
-    ...options, 
-    source: 'search', 
-    query 
-  }) as ScrapeOptions;
-  console.log(`🔎 Searching Google for "${query}"...`);
+  const merged = { source: 'search' as const, ...options, query };
+  const opts = ScrapeOptionsSchema.parse(merged) as ScrapeOptions;
+  const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'search' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.search.rpm };
 
-  let leads = await scrapeSearchImpl(query, opts.limit);
-
+  const raw = await withRateLimit(
+    () => scrapeSearchImpl(query, opts),
+    rateOpts
+  );
+  let leads = await applyPostProcessing(raw, opts);
   leads = deduplicateLeads(leads);
-
-  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
-    ? options.rpm 
-    : { source: opts.source };
-
-  if (opts.enrich !== false) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  if (opts.useLLMScoring) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => scoreLeadWithOllama(lead, opts.category || query, opts.ollamaModel),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  return leads;
+  return leads.slice(0, opts.limit);
 }
 
-/**
- * Scrape Yelp listings.
- */
 export async function scrapeYelp(
   category: string,
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ 
-    ...options, 
-    source: 'yelp', 
-    category, 
-    location 
-  }) as ScrapeOptions;
-  console.log(`📍 Scraping Yelp for "${category}" near "${location}"...`);
+  const merged = { source: 'yelp' as const, enrich: false, ...options, category, location };
+  const opts = ScrapeOptionsSchema.parse(merged) as ScrapeOptions;
+  const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'yelp' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.yelp.rpm };
 
-  let leads = await scrapeYelpImpl(category, location, opts.limit);
-
+  const raw = await withRateLimit(
+    () => scrapeYelpImpl(category, location, opts),
+    rateOpts
+  );
+  let leads = await applyPostProcessing(raw, opts);
   leads = deduplicateLeads(leads);
-
-  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
-    ? options.rpm 
-    : { source: opts.source };
-
-  if (opts.enrich !== false) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  if (opts.useLLMScoring) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  return leads;
+  return leads.slice(0, opts.limit);
 }
 
-/**
- * Scrape YellowPages directory.
- */
 export async function scrapeYellowPages(
   category: string,
   location: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ 
-    ...options, 
-    source: 'yellowpages', 
-    category, 
-    location 
-  }) as ScrapeOptions;
-  console.log(`🟨 Scraping YellowPages for "${category}" in "${location}"...`);
+  const merged = { source: 'yellowpages' as const, ...options, category, location };
+  const opts = ScrapeOptionsSchema.parse(merged) as ScrapeOptions;
+  const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'yellowpages' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.yellowpages.rpm };
 
-  let leads = await scrapeYellowPagesImpl(category, location, opts.limit);
-
+  const raw = await withRateLimit(
+    () => scrapeYellowPagesImpl(category, location, opts),
+    rateOpts
+  );
+  let leads = await applyPostProcessing(raw, opts);
   leads = deduplicateLeads(leads);
-
-  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
-    ? options.rpm 
-    : { source: opts.source };
-
-  if (opts.enrich) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  if (opts.useLLMScoring) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => scoreLeadWithOllama(lead, category, opts.ollamaModel),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  return leads;
+  return leads.slice(0, opts.limit);
 }
 
-/**
- * Scrape Crunchbase profiles.
- */
 export async function scrapeCrunchbase(
   query: string,
   options: Partial<ScrapeOptions> = {}
 ): Promise<Lead[]> {
-  const opts = ScrapeOptionsSchema.parse({ 
-    ...options, 
-    source: 'crunchbase', 
-    query 
-  }) as ScrapeOptions;
-  console.log(`💼 Scraping Crunchbase for "${query}"...`);
+  const merged = { source: 'crunchbase' as const, ...options, query };
+  const opts = ScrapeOptionsSchema.parse(merged) as ScrapeOptions;
+  const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'crunchbase' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.crunchbase.rpm };
 
-  let leads = await scrapeCrunchbaseImpl(query, opts.limit);
-
+  const raw = await withRateLimit(
+    () => scrapeCrunchbaseImpl(query, opts),
+    rateOpts
+  );
+  let leads = await applyPostProcessing(raw, opts);
   leads = deduplicateLeads(leads);
-
-  const rateLimitOpts: RateLimitOptions = options.rpm !== undefined 
-    ? options.rpm 
-    : { source: opts.source };
-
-  if (opts.enrich) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => enrichLead(lead, opts.verifyEmails),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  if (opts.useLLMScoring) {
-    leads = await processWithConcurrency(
-      leads,
-      (lead: Lead) => scoreLeadWithOllama(lead, query, opts.ollamaModel),
-      opts.concurrency,
-      rateLimitOpts
-    );
-  }
-
-  return leads;
+  return leads.slice(0, opts.limit);
 }
 
 /**
- * Saves leads to disk; format is inferred from file extension or name.
- * If append=true and the file exists, CSV and JSON will be appended to
- * (CSV skips header on append; JSON concatenates the arrays). Other formats
- * always overwrite.
+ * Writes leads to disk in the format implied by the filepath extension.
  */
-export async function saveLeads(leads: Lead[], filepath: string = 'leads.csv', append: boolean = false): Promise<void> {
-  if (!Array.isArray(leads) || leads.length === 0) {
-    throw new Error('Cannot save: leads array must be non-empty');
+export async function saveLeads(
+  leads: Lead[],
+  filepath: string = 'leads.csv',
+  append: boolean = false
+): Promise<void> {
+  if (!leads || leads.length === 0) {
+    console.warn('No leads to save.');
+    return;
   }
   let format: ExportFormat = 'csv';
   const lower = filepath.toLowerCase();
@@ -328,13 +210,4 @@ export async function saveLeads(leads: Lead[], filepath: string = 'leads.csv', a
   await exportLeads(leads, format, filepath, append);
 }
 
-/**
- * Export leads directly to a Google Sheet (re-export from exporter).
- */
-export async function exportToSheets(
-  leads: Lead[],
-  spreadsheetId: string,
-  options: GoogleSheetsOptions = {}
-): Promise<void> {
-  return exportToSheetsImpl(leads, spreadsheetId, options);
-}
+export const exportToSheets = exportToSheetsImpl;

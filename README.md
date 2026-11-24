@@ -412,6 +412,17 @@ Example `~/.leadmine/config.json`:
 | concurrency | 3             | Max parallel operations for enrichment/scoring (used by `processWithConcurrency`) |
 | append      | false         | Append leads to existing CSV/JSON file (instead of overwriting). Other formats always overwrite. |
 
+**RateLimitOptions** (used by `withRateLimit`, `processWithConcurrency` and internally by all scrapers) can be supplied as a plain number (treated as RPM) or an object:
+
+```ts
+{
+  rpm?: number;           // requests per minute
+  backoffFactor?: number; // multiplier on 429 errors (default 1.5)
+  maxDelayMs?: number;    // cap on backoff delay (default 45000)
+  source?: ScrapeSource;  // used for independent per-source timers
+}
+```
+
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
 
 When using the Docker image, the same config file is loaded from the mounted `~/.leadmine` (or `/root/.leadmine`) volume.
