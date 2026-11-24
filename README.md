@@ -82,7 +82,7 @@ Category, location, rating, review count and keyword filters for high-quality le
 </td>
 <td>
 🧠 <b>Local LLM Scoring</b><br>
-Uses Ollama to score leads on relevance to your category and budget signals (local only, no data leaves your machine)
+Uses Ollama to score leads on relevance to your category and budget signals with configurable minScore filter (local only, no data leaves your machine)
 </td>
 </tr>
 <tr>
@@ -238,7 +238,7 @@ lead-mine scrape --source=search --query="HVAC companies near Austin TX" --outpu
 LLM scoring (requires Ollama running locally with a model pulled):
 
 ```bash
-lead-mine scrape --category="plumbers" --location="Portland, OR" --use-llm-scoring --ollama-model=llama3.1 --limit=15
+lead-mine scrape --category="plumbers" --location="Portland, OR" --use-llm-scoring --ollama-model=llama3.1 --min-score=6 --limit=15
 ```
 
 Yelp fallback when Maps coverage is thin:
@@ -307,6 +307,7 @@ const leads = await scrapeYellowPages('coffee shops', 'Portland, OR', {
   ...config,
   limit: 25,
   minRating: 4.0,
+  minScore: 6,
   enrich: true,
   verifyEmails: true,
   useLLMScoring: true,
@@ -382,6 +383,7 @@ Example `~/.leadmine/config.json`:
   "ollamaModel": "llama3.1",
   "headless": true,
   "minRating": 4.0,
+  "minScore": 5.0,
   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
   "proxy": "http://user:pass@zproxy.lumproxy.com:22222",
   "googleSheets": {
@@ -404,6 +406,7 @@ Example `~/.leadmine/config.json`:
 | headless    | true          | Run browser without GUI (`--no-headless` to disable) |
 | rpm         | varies by source | Requests per minute. Each source has a polite preset (maps: 6, search: 10, yelp: 15, yellowpages: 25, crunchbase: 12). Overridable via flag/config. Exponential backoff is applied automatically on rate-limit or block errors. |
 | minRating   | —             | Filter leads by minimum rating (0–5) |
+| minScore    | 0             | Minimum relevance score (0-10) to keep after LLM scoring (only applied if useLLMScoring: true) |
 | userAgent   | —             | Override default stealth user agent |
 | proxy       | —             | Single proxy URL or array of URLs for rotation. Residential proxies supported via provider gateway (e.g. `http://user-zone-resi:pass@gate.smartproxy.com:7000`). Rotates automatically across browser sessions. |
 | googleSheets.spreadsheetId | — | Spreadsheet ID for direct Google Sheets export |
@@ -514,7 +517,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] CRM import templates (HubSpot CSV, Salesforce)
 - [x] Rate-limit presets per source with exponential backoff
 - [x] Add --append flag to saveLeads() allowing CSV/JSON append instead of overwrite
-- [ ] Implement configurable minScore threshold in ScrapeOptions to filter LLM-scored leads
+- [x] Implement configurable minScore threshold in ScrapeOptions to filter LLM-scored leads
 - [ ] Add actionable troubleshooting suggestions to CLI error output (blocks, missing Ollama, proxy failures)
 - [ ] Expand scrapers.test.ts with mocked end-to-end tests for wizard + config roundtrip
 - [ ] Document scraper extension pattern and template in CONTRIBUTING.md with new source checklist

@@ -88,6 +88,7 @@ program
       .default(3)
   )
   .option('--rpm <number>', 'Override requests per minute (polite per-source presets used if omitted; exponential backoff applied on rate limits/blocks)')
+  .option('--min-score <number>', 'Minimum relevance score threshold (0-10) when using LLM scoring to filter leads', '0')
   .option('--append', 'Append to existing CSV/JSON file instead of overwriting (CSV/JSON only)')
   .action(async (cmdOptions) => {
     try {
@@ -111,6 +112,14 @@ program
         }
       }
 
+      let minScore: number | undefined;
+      if (cmdOptions.minScore !== undefined) {
+        minScore = parseFloat(cmdOptions.minScore);
+        if (Number.isNaN(minScore) || minScore < 0 || minScore > 10) {
+          program.error('minScore must be a number between 0 and 10.');
+        }
+      }
+
       const source = cmdOptions.source as ScrapeSource;
       const outputPath = cmdOptions.output;
       const query = cmdOptions.query || cmdOptions.category;
@@ -124,6 +133,7 @@ program
         ollamaModel: cmdOptions.ollamaModel,
         concurrency,
         rpm,
+        minScore,
         append: cmdOptions.append,
       };
 
@@ -272,6 +282,7 @@ program
         headless: true,
         rpm,
         minRating: 4.0,
+        minScore: 5.0,
         concurrency: 3,
       };
 

@@ -96,6 +96,18 @@ async function applyPostProcessing(leads: Lead[], opts: ScrapeOptions): Promise<
     );
   }
 
+  // Filter by minScore if LLM scoring was used and a positive threshold is configured.
+  // This implements the configurable threshold from the roadmap.
+  if (opts.useLLMScoring && typeof opts.minScore === 'number' && opts.minScore > 0) {
+    const threshold = opts.minScore;
+    const before = processed.length;
+    processed = processed.filter((lead) => (lead.relevanceScore ?? 0) >= threshold);
+    const filteredCount = before - processed.length;
+    if (filteredCount > 0) {
+      console.log(`🧹 Filtered out ${filteredCount} leads below minScore threshold (${threshold})`);
+    }
+  }
+
   return processed;
 }
 
