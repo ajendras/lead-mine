@@ -138,7 +138,7 @@ program
       const scrapeOpts = ScrapeOptionsSchema.parse({
         ...config,
         ...cliOpts,
-      });
+      }) as ScrapeOptions;
 
       let leads: leadMine.Lead[] = [];
 
@@ -289,7 +289,7 @@ program
         const scrapeOpts = ScrapeOptionsSchema.parse({
           ...config,
           limit,
-        });
+        }) as ScrapeOptions;
 
         let leads: leadMine.Lead[] = [];
         const cat = config.category!;
