@@ -427,6 +427,7 @@ Example `~/.leadmine/config.json`:
 ```
 
 All options are validated by `ScrapeOptionsSchema` (Zod) in `src/types.ts`.
+The exported `Lead` interface also includes an optional `source?: ScrapeSource` property that identifies which scraper produced each lead.
 
 When using the Docker image, the same config file is loaded from the mounted `~/.leadmine` (or `/root/.leadmine`) volume.
 
