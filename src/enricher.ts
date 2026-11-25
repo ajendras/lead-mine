@@ -272,11 +272,13 @@ Return valid JSON only:
     };
   } catch (err: any) {
     const message = err.message || String(err);
-    if (message.includes('connect') || message.includes('ECONNREFUSED')) {
-      console.warn(
-        `⚠️  Could not connect to Ollama at http://localhost:11434. Make sure Ollama is running (` +
-          `ollama serve) and the model "${model}" is pulled. LLM scoring skipped.`
-      );
+    const lower = message.toLowerCase();
+    if (lower.includes('connect') || lower.includes('econnrefused') || lower.includes('11434')) {
+      console.warn(`⚠️  Ollama is not running or the model is unavailable.`);
+      console.warn(`   • Start the server: ollama serve`);
+      console.warn(`   • Pull the model: ollama pull ${model}`);
+      console.warn(`   • Verify: ollama list`);
+      console.warn(`   • Disable with --no-use-llm-scoring (or set useLLMScoring: false)`);
     } else {
       console.warn(`⚠️  LLM scoring failed for "${lead.name}": ${message}. Continuing without score.`);
     }

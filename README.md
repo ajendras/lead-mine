@@ -441,6 +441,55 @@ When using the Docker image, the same config file is loaded from the mounted `~/
 
 LeadMine will now write leads directly to the sheet using the service account (no user login required). The first row becomes a header; existing data is overwritten.
 
+## 🛠 Troubleshooting
+
+The CLI now prints **actionable, context-aware suggestions** on error. Common cases are covered below (the exact text you see in the terminal matches these recommendations).
+
+### Blocked by Google / CAPTCHA / rate limits
+Errors mentioning "block", "403", "429", "captcha", "Cloudflare", or "unusual traffic".
+
+- Use a **residential proxy**: `--proxy "http://user:pass@gate.smartproxy.com:7000"`
+- Slow down: `--rpm=3` (or lower)
+- Run visibly: `--no-headless`
+- Switch source: `--source=yelp` instead of `maps`
+- The built-in exponential backoff and stealth already help; proxies are the most reliable fix for heavy scraping.
+
+### Ollama not reachable
+Errors mentioning "ollama", "11434", "ECONNREFUSED", or "connect".
+
+- In a separate terminal run:
+  ```bash
+  ollama serve
+  ollama pull llama3.1
+  ```
+- Verify the model: `ollama list`
+- Disable temporarily: `--no-use-llm-scoring`
+- In Docker add `--network=host` so the container can reach the host Ollama instance.
+
+### Proxy failures
+Errors mentioning "proxy", "ECONNREFUSED", "ETIMEDOUT", or "EHOSTUNREACH".
+
+- Verify the URL format: `http://user:pass@host:port`
+- Test independently:
+  ```bash
+  curl -x "http://your-proxy:port" https://httpbin.org/ip
+  ```
+- Use provider gateway URLs for residential proxies (Smartproxy, Oxylabs, Bright Data).
+- Temporarily omit `--proxy` to isolate the issue.
+- Multiple proxies rotate automatically; supply more than one for resilience.
+
+### Google Sheets export errors
+- Confirm `~/.leadmine/service-account.json` exists and is valid JSON.
+- The `client_email` from that file must be added to the spreadsheet with **Editor** permission.
+- See the full setup steps in the section above.
+
+### General tips
+- Start with `lead-mine wizard` — it validates your environment.
+- Begin with small `--limit` values while tuning proxies/rate limits.
+- Check warnings printed during enrichment or scoring.
+- For Docker: mount both the output directory and `~/.leadmine`.
+- Persistent problems? Copy the full error (including the troubleshooting block) into a GitHub issue.
+
 ## 🧩 Architecture
 
 ```mermaid
@@ -518,7 +567,7 @@ Runs the Vitest suite in `tests/scrapers.test.ts`. Covers mocked scraper fixture
 - [x] Rate-limit presets per source with exponential backoff
 - [x] Add --append flag to saveLeads() allowing CSV/JSON append instead of overwrite
 - [x] Implement configurable minScore threshold in ScrapeOptions to filter LLM-scored leads
-- [ ] Add actionable troubleshooting suggestions to CLI error output (blocks, missing Ollama, proxy failures)
+- [x] Add actionable troubleshooting suggestions to CLI error output (blocks, missing Ollama, proxy failures)
 - [ ] Expand scrapers.test.ts with mocked end-to-end tests for wizard + config roundtrip
 - [ ] Document scraper extension pattern and template in CONTRIBUTING.md with new source checklist
 - [ ] Support loading proxy list from text file (--proxy-file) in config.ts and browser utils

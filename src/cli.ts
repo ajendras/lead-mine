@@ -7,6 +7,52 @@ import * as readline from 'node:readline/promises';
 
 const program = new Command();
 
+function printTroubleshootingSuggestions(error: unknown): void {
+  if (!(error instanceof Error)) {
+    return;
+  }
+  const msg = error.message.toLowerCase();
+
+  console.error('\n🔧 Actionable troubleshooting:');
+
+  if (msg.includes('ollama') || msg.includes('11434') || msg.includes('connection refused') || (msg.includes('connect') && (msg.includes('localhost') || msg.includes('ollama')))) {
+    console.error('   • Ollama LLM scoring is enabled but the service is not reachable.');
+    console.error('   • Run these commands in a separate terminal:');
+    console.error('       ollama serve');
+    console.error('       ollama pull llama3.1');
+    console.error('   • Verify with: ollama list');
+    console.error('   • Or disable with --no-use-llm-scoring (or set useLLMScoring: false in config)');
+  } else if (msg.includes('proxy') || msg.includes('econnrefused') || msg.includes('etimedout') || msg.includes('ehostunreach') || msg.includes('proxy error')) {
+    console.error('   • Proxy connection failed.');
+    console.error('   • Check:');
+    console.error('       - Proxy URL format (http://user:pass@host:port)');
+    console.error('       - Credentials are valid and the proxy is online');
+    console.error('       - Test with: curl -x "<your-proxy>" https://httpbin.org/ip');
+    console.error('       - Residential gateways (Smartproxy, Oxylabs, Bright Data) work best');
+    console.error('   • Temporarily remove --proxy to isolate the issue');
+  } else if (msg.includes('block') || msg.includes('403') || msg.includes('429') || msg.includes('captcha') || msg.includes('cloudflare') || msg.includes('unusual traffic') || msg.includes('forbidden') || msg.includes('detected as bot') || msg.includes('access denied')) {
+    console.error('   • The site blocked the request (common with Google services).');
+    console.error('   • Try:');
+    console.error('       - Residential proxy: --proxy "http://user:pass@gate.smartproxy.com:7000"');
+    console.error('       - Lower speed: --rpm=3');
+    console.error('       - Visible browser: --no-headless');
+    console.error('       - Different source: --source=yelp');
+    console.error('       - Smaller --limit');
+    console.error('   • Exponential backoff is applied automatically on 429s');
+  } else if (msg.includes('service account') || msg.includes('sheets') || msg.includes('google') || msg.includes('enoent')) {
+    console.error('   • Google Sheets / service account issue.');
+    console.error('   • Follow the "Google Sheets Setup" section in README.md exactly.');
+    console.error('   • Confirm ~/.leadmine/service-account.json exists and the client_email has Editor access on the sheet.');
+  } else {
+    console.error('   • Check your internet connection and firewall.');
+    console.error('   • Try a smaller --limit, lower --rpm, or different source.');
+    console.error('   • For Docker: add --network=host when using Ollama.');
+    console.error('   • Open an issue at https://github.com/ajendras/lead-mine with the full error output.');
+  }
+
+  console.error('\n   The scraper is polite by design (rate limits, stealth, backoff).');
+}
+
 program
   .name('lead-mine')
   .description(
@@ -201,6 +247,7 @@ program
 
       if (error instanceof Error) {
         console.error(`\n❌ ${error.message}`);
+        printTroubleshootingSuggestions(error);
       } else {
         console.error('\n❌ An unknown error occurred during scraping.');
         console.error(error);
@@ -341,6 +388,7 @@ program
     } catch (error) {
       if (error instanceof Error) {
         console.error(`\n❌ Wizard error: ${error.message}`);
+        printTroubleshootingSuggestions(error);
       } else {
         console.error('\n❌ An unknown error occurred in the wizard.');
       }
