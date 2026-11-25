@@ -121,7 +121,7 @@ export async function scrapeMaps(
   const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'maps' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.maps.rpm };
 
   const raw = await withRateLimit(
-    () => scrapeMapsImpl(category, location, opts),
+    () => scrapeMapsImpl(category, location, opts.limit),
     rateOpts
   );
   let leads = await applyPostProcessing(raw, opts);
@@ -138,7 +138,7 @@ export async function scrapeSearch(
   const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'search' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.search.rpm };
 
   const raw = await withRateLimit(
-    () => scrapeSearchImpl(query, opts),
+    () => scrapeSearchImpl(query, opts.limit),
     rateOpts
   );
   let leads = await applyPostProcessing(raw, opts);
@@ -156,7 +156,7 @@ export async function scrapeYelp(
   const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'yelp' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.yelp.rpm };
 
   const raw = await withRateLimit(
-    () => scrapeYelpImpl(category, location, opts),
+    () => scrapeYelpImpl(category, location, opts.limit),
     rateOpts
   );
   let leads = await applyPostProcessing(raw, opts);
@@ -174,7 +174,7 @@ export async function scrapeYellowPages(
   const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'yellowpages' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.yellowpages.rpm };
 
   const raw = await withRateLimit(
-    () => scrapeYellowPagesImpl(category, location, opts),
+    () => scrapeYellowPagesImpl(category, location, opts.limit),
     rateOpts
   );
   let leads = await applyPostProcessing(raw, opts);
@@ -191,7 +191,7 @@ export async function scrapeCrunchbase(
   const rateOpts: RateLimitOptions = opts.rpm ?? { source: 'crunchbase' as ScrapeSource, rpm: RATE_LIMIT_PRESETS.crunchbase.rpm };
 
   const raw = await withRateLimit(
-    () => scrapeCrunchbaseImpl(query, opts),
+    () => scrapeCrunchbaseImpl(query, opts.limit),
     rateOpts
   );
   let leads = await applyPostProcessing(raw, opts);
